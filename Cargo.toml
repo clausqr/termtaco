@@ -1,0 +1,21 @@
+[package]
+name = "gauge"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.72"
+description = "A tiny TUI speedometer for streaming values read from stdin"
+
+[[bin]]
+name = "gauge"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.24"
+crossterm = "0.27"
+# Pinned: 1.11+ raises its MSRV above our Rust 1.72 host. Cargo 1.72's resolver
+# ignores `rust-version`, so without this exact pin a `cargo update` would
+# silently over-resolve to a version that fails to build. Keep `=`.
+unicode-segmentation = "=1.10.1"
+
+[profile.release]
+opt-level = 2
