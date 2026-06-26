@@ -69,6 +69,11 @@ Quit with `q`, `Esc`, or `Ctrl-C`.
 # Downstream of an existing text readout (first number per line is used)
 my-rate-printer | termtaco --window 10000 --title "ingest/s"
 
+# ROS 2 topic rate as a live dial. `ros2 topic hz` prints a multi-line block
+# per sample, so keep only the "average rate" line (--line-buffered flushes
+# each match immediately); the first number on it is the rate.
+ros2 topic hz /odom | grep --line-buffered 'average rate' | termtaco --title "rate/s" --0
+
 # A quick static sweep
 seq 1 100 | awk '{print $1*0.7}' | termtaco --window 50
 ```
