@@ -26,7 +26,7 @@ Sleep 500ms
 Show
 
 # Smooth sine sweep — best for watching the needle move.
-Type "./feed.sh sine | ./target/release/termtaco --title RATE" Enter
+Type "./feed.sh sine | ./target/release/termtaco --title RATE --border-label termtaco" Enter
 Sleep 10s
 
 # Quit cleanly (termtaco reads keys from the controlling tty).

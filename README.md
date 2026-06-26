@@ -74,7 +74,7 @@ Quit with `q`, `Esc`, or `Ctrl-C`.
 
 ```sh
 # Live demo with the bundled feeder
-./feed.sh sine | termtaco --title RATE
+./feed.sh sine | termtaco --title RATE --border-label termtaco
 
 # Downstream of an existing text readout (first number per line is used)
 my-rate-printer | termtaco --window 10000 --title "ingest/s"

@@ -460,11 +460,14 @@ fn draw_stat_ticks(ctx: &mut Context, s: &Stats, lo: f64, hi: f64, theme: &Theme
     draw_tick(ctx, s.min, lo, hi, R_ARC - 0.08, R_ARC + 0.02, theme.min_max);
     draw_tick(ctx, s.max, lo, hi, R_ARC - 0.08, R_ARC + 0.02, theme.min_max);
 
+    // Mean and the ±1σ band are longer and protrude further past the rim than
+    // the graduation ticks and the min/max marks, so they read at a glance even
+    // when everything is the same color.
     let band_lo = (s.mean - s.stddev).clamp(lo, hi);
     let band_hi = (s.mean + s.stddev).clamp(lo, hi);
-    draw_tick(ctx, band_lo, lo, hi, R_ARC - 0.06, R_ARC + 0.01, theme.band);
-    draw_tick(ctx, band_hi, lo, hi, R_ARC - 0.06, R_ARC + 0.01, theme.band);
-    draw_tick(ctx, s.mean, lo, hi, R_ARC - 0.06, R_ARC + 0.01, theme.mean);
+    draw_tick(ctx, band_lo, lo, hi, R_ARC - 0.11, R_ARC + 0.05, theme.band);
+    draw_tick(ctx, band_hi, lo, hi, R_ARC - 0.11, R_ARC + 0.05, theme.band);
+    draw_tick(ctx, s.mean, lo, hi, R_ARC - 0.14, R_ARC + 0.07, theme.mean);
 
     ctx.draw(&Points {
         coords: &[(0.0, 0.0)],
