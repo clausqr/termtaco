@@ -56,6 +56,7 @@ pub struct Theme {
     pub title: Color,
     pub alarm: Color,
     pub led_off: Color,
+    pub stale: Color,
 }
 
 impl Theme {
@@ -79,6 +80,7 @@ impl Theme {
             title: Color::White,
             alarm: Color::LightRed,
             led_off: Color::DarkGray,
+            stale: Color::Yellow,
         }
     }
 }
@@ -98,6 +100,10 @@ pub struct Speedometer {
     theme: Theme,
     /// Optional title shown at the top of the dial (set via `--title`).
     title: Option<String>,
+    /// Always keep 0 in the scale (set via `--0`), e.g. for a speedometer.
+    include_zero: bool,
+    /// Feed has gone quiet; the reading is frozen, not live.
+    stale: bool,
     /// The currently displayed scale `(lo, hi, step)`, held across frames so an
     /// overflow can pin the needle before the scale follows.
     scale: Option<(f64, f64, f64)>,
@@ -110,13 +116,22 @@ impl Display for Speedometer {
         self.title = if title.is_empty() { None } else { Some(title) };
     }
 
+    fn set_stale(&mut self, stale: bool) {
+        self.stale = stale;
+    }
+
+    fn set_include_zero(&mut self, v: bool) {
+        self.include_zero = v;
+    }
+
     fn render(&mut self, frame: &mut Frame, area: Rect, stats: &Stats) {
         let stats = *stats;
         let theme = self.theme;
         let title = self.title.clone();
+        let stale = self.stale;
 
         // Target scale that would fit the current window.
-        let target = nice_scale(&stats);
+        let target = nice_scale(&stats, self.include_zero);
         let (_, cur_hi, _) = *self.scale.get_or_insert(target);
 
         // Overflow = the live value has run past the top of the displayed scale.
@@ -141,10 +156,23 @@ impl Display for Speedometer {
         let (lo, hi, step) = self.scale.unwrap();
         let (half_x, half_y) = aspect_bounds(area);
 
-        // Red is reserved for the alarm (overflow): the needle and value join
+        // Stale dims the needle and value to grey (frozen reading). Otherwise
+        // red is reserved for the alarm (overflow): the needle and value join
         // the LED in red; everything else stays white.
-        let needle_color = if overflow { theme.alarm } else { theme.needle };
-        let value_color = if overflow { theme.alarm } else { theme.value };
+        let needle_color = if stale {
+            theme.stats
+        } else if overflow {
+            theme.alarm
+        } else {
+            theme.needle
+        };
+        let value_color = if stale {
+            theme.stats
+        } else if overflow {
+            theme.alarm
+        } else {
+            theme.value
+        };
 
         let canvas = Canvas::default()
             .block(Block::default().borders(Borders::ALL).title(" gauge "))
@@ -163,6 +191,7 @@ impl Display for Speedometer {
                 draw_labels(ctx, &stats, half_x, half_y, value_color, &theme);
                 draw_title(ctx, title.as_deref(), &theme);
                 draw_led(ctx, overflow, &theme);
+                draw_stale(ctx, stale, &theme);
             });
 
         frame.render_widget(canvas, area);
@@ -234,15 +263,25 @@ fn decimals_for(step: f64) -> usize {
 /// range (via [`nice5`]), then floors/ceils the bounds to it. Returns
 /// `(lo, hi, step)`. A near-constant window is sized from the value's own
 /// magnitude and expanded a step on each side so the needle isn't pinned.
-fn nice_scale(s: &Stats) -> (f64, f64, f64) {
-    let raw_span = if (s.max - s.min).abs() < 1e-12 {
-        s.max.abs().max(1.0) // constant data: scale from the value's magnitude
+///
+/// With `include_zero`, the origin is folded into the range first (so the gauge
+/// always shows 0, like a speedometer) and the step is sized for the extended
+/// range. Zero stays on the tick grid since it is a multiple of any step.
+fn nice_scale(s: &Stats, include_zero: bool) -> (f64, f64, f64) {
+    let mut dmin = s.min;
+    let mut dmax = s.max;
+    if include_zero {
+        dmin = dmin.min(0.0);
+        dmax = dmax.max(0.0);
+    }
+    let raw_span = if (dmax - dmin).abs() < 1e-12 {
+        dmax.abs().max(1.0) // constant data: scale from the value's magnitude
     } else {
-        s.max - s.min
+        dmax - dmin
     };
     let step = nice5(raw_span / 4.0);
-    let mut lo = (s.min / step).floor() * step;
-    let mut hi = (s.max / step).ceil() * step;
+    let mut lo = (dmin / step).floor() * step;
+    let mut hi = (dmax / step).ceil() * step;
     if hi - lo < step {
         lo -= step;
         hi += step;
@@ -312,6 +351,13 @@ fn draw_title(ctx: &mut Context, title: Option<&str>, theme: &Theme) {
             0.42,
             Span::styled(t.to_string(), Style::default().fg(theme.title)),
         );
+    }
+}
+
+/// "STALE" banner shown when the feed has gone quiet, just above the value.
+fn draw_stale(ctx: &mut Context, stale: bool, theme: &Theme) {
+    if stale {
+        ctx.print(-0.15, 0.12, Span::styled("STALE", Style::default().fg(theme.stale)));
     }
 }
 
@@ -471,20 +517,32 @@ mod tests {
     #[test]
     fn nice_scale_rounds_to_fives_at_magnitude() {
         // 18 → 20 at the units scale.
-        let (lo, hi, step) = nice_scale(&stats(12.0, 6.0, 18.0));
+        let (lo, hi, step) = nice_scale(&stats(12.0, 6.0, 18.0), false);
         approx(lo, 5.0);
         approx(hi, 20.0);
         approx(step, 5.0);
 
         // 49995 → 50000 at the ten-thousands scale.
-        let (_, hi2, step2) = nice_scale(&stats(40000.0, 10000.0, 49995.0));
+        let (_, hi2, step2) = nice_scale(&stats(40000.0, 10000.0, 49995.0), false);
         approx(hi2, 50000.0);
         approx(step2, 10000.0);
 
         // 0.0023 → 0.0025 at the ten-thousandths scale.
-        let (_, hi3, step3) = nice_scale(&stats(0.0015, 0.0005, 0.0023));
+        let (_, hi3, step3) = nice_scale(&stats(0.0015, 0.0005, 0.0023), false);
         approx(hi3, 0.0025);
         approx(step3, 0.0005);
+    }
+
+    #[test]
+    fn include_zero_anchors_scale_at_origin() {
+        // Without it, data 30..42 scales to 30..45.
+        let (lo, _, _) = nice_scale(&stats(33.0, 30.0, 42.0), false);
+        approx(lo, 30.0);
+        // With --0, the origin is folded in and the step sizes for 0..42.
+        let (lo0, hi0, step0) = nice_scale(&stats(33.0, 30.0, 42.0), true);
+        approx(lo0, 0.0);
+        approx(hi0, 50.0);
+        approx(step0, 10.0);
     }
 
     #[test]
@@ -527,8 +585,16 @@ mod tests {
     }
 
     #[test]
+    fn stale_shows_banner() {
+        let mut display = Speedometer::default();
+        display.set_stale(true);
+        let text = render_text(&mut display, &stats(33.0, 30.0, 42.0));
+        assert!(text.contains("STALE"), "stale banner should be drawn");
+    }
+
+    #[test]
     fn degenerate_window_gets_a_band() {
-        let (lo, hi, _) = nice_scale(&stats(4.0, 4.0, 4.0));
+        let (lo, hi, _) = nice_scale(&stats(4.0, 4.0, 4.0), false);
         assert!(lo < 4.0 && hi > 4.0, "band should bracket the value");
     }
 }

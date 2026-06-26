@@ -16,6 +16,14 @@ pub trait Display {
 
     /// Set an optional title. Default: ignored.
     fn set_title(&mut self, _title: String) {}
+
+    /// Mark the feed as stale (no new samples for a while) so the renderer can
+    /// signal that the reading is frozen rather than live. Default: ignored.
+    fn set_stale(&mut self, _stale: bool) {}
+
+    /// Always keep 0 in the scale, even if the data never reaches it (e.g. a
+    /// speedometer that should read from 0). Default: ignored.
+    fn set_include_zero(&mut self, _include_zero: bool) {}
 }
 
 /// Construct a display by name. Returns `None` for an unknown name so the

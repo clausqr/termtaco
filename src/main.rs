@@ -16,6 +16,7 @@ struct Args {
     window: usize,
     display: String,
     title: Option<String>,
+    include_zero: bool,
 }
 
 const HELP: &str = "\
@@ -28,6 +29,7 @@ OPTIONS:
     --window N        samples retained for stats (default: 200)
     --display NAME    renderer to use (default: speedometer)
     --title TEXT      title shown at the top of the dial
+    --0, --zero       always keep 0 in the scale (e.g. a speedometer)
     -h, --help        print this help
 
 Reads one float per line from stdin; the first number on each line is used,
@@ -38,6 +40,7 @@ fn parse_args() -> Result<Args, ExitCode> {
     let mut window = 200usize;
     let mut display = String::from("speedometer");
     let mut title: Option<String> = None;
+    let mut include_zero = false;
     let mut it = std::env::args().skip(1);
 
     while let Some(a) = it.next() {
@@ -70,6 +73,9 @@ fn parse_args() -> Result<Args, ExitCode> {
             s if s.starts_with("--title=") => {
                 title = Some(s["--title=".len()..].to_string());
             }
+            "--0" | "--zero" => {
+                include_zero = true;
+            }
             other => {
                 eprintln!("unknown argument: {other}\n\n{HELP}");
                 return Err(ExitCode::from(2));
@@ -86,6 +92,7 @@ fn parse_args() -> Result<Args, ExitCode> {
         window,
         display,
         title,
+        include_zero,
     })
 }
 
@@ -124,6 +131,7 @@ fn main() -> ExitCode {
     if let Some(t) = args.title {
         display.set_title(t);
     }
+    display.set_include_zero(args.include_zero);
 
     match run(&mut *display, args.window) {
         Ok(()) => ExitCode::SUCCESS,
