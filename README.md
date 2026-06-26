@@ -50,9 +50,10 @@ this is a small standalone tool.
   reads from 0 even when the data never gets near it.
 - Overflow alarm: when a value runs past full scale the needle pins at the top,
   an LED lights, and the gauge holds there for one second before rescaling.
-- Staleness signal: if the feed goes quiet for a few seconds the reading is
-  flagged STALE and dimmed, so a frozen needle is never mistaken for a live one.
-- White by default; red is reserved for the alarm, yellow for stale.
+- Staleness signal: if the feed goes quiet for a few seconds a yellow STALE LED
+  lights and the needle greys out, so a frozen needle is never mistaken for a
+  live one.
+- White by default; red is reserved for the overflow alarm, yellow for stale.
 - No async runtime. A stdin reader thread feeds the render loop over a channel.
 
 ## Install
@@ -136,7 +137,8 @@ STALE during each quiet window and recovers when the feed resumes.
 - The big number under the hub is the current value. The sample count sits in
   the top-right corner.
 - The LED on the lower right lights red on overflow; the needle and value turn
-  red while the gauge is capped.
+  red while the gauge is capped. The LED on the lower left lights yellow when
+  the feed is stale, and the needle greys out.
 
 ## Architecture
 

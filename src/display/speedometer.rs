@@ -156,8 +156,8 @@ impl Display for Speedometer {
         let (lo, hi, step) = self.scale.unwrap();
         let (half_x, half_y) = aspect_bounds(area);
 
-        // Stale dims the needle and value to grey (frozen reading). Otherwise
-        // red is reserved for the alarm (overflow): the needle and value join
+        // Stale greys the needle (the marker hand) and lights the yellow stale
+        // LED. Otherwise red is the alarm (overflow): the needle and value join
         // the LED in red; everything else stays white.
         let needle_color = if stale {
             theme.stats
@@ -166,13 +166,7 @@ impl Display for Speedometer {
         } else {
             theme.needle
         };
-        let value_color = if stale {
-            theme.stats
-        } else if overflow {
-            theme.alarm
-        } else {
-            theme.value
-        };
+        let value_color = if overflow { theme.alarm } else { theme.value };
 
         let canvas = Canvas::default()
             .block(Block::default().borders(Borders::ALL).title(" gauge "))
@@ -354,10 +348,11 @@ fn draw_title(ctx: &mut Context, title: Option<&str>, theme: &Theme) {
     }
 }
 
-/// "STALE" banner shown when the feed has gone quiet, just above the value.
+/// Yellow stale LED on the lower-left of the dial face, lit when the feed has
+/// gone quiet (mirrors the red overflow LED on the lower-right).
 fn draw_stale(ctx: &mut Context, stale: bool, theme: &Theme) {
     if stale {
-        ctx.print(-0.15, 0.12, Span::styled("STALE", Style::default().fg(theme.stale)));
+        ctx.print(-0.62, -0.10, Span::styled("● STALE", Style::default().fg(theme.stale)));
     }
 }
 
