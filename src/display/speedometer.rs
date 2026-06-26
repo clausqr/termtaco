@@ -169,7 +169,7 @@ impl Display for Speedometer {
         let value_color = if overflow { theme.alarm } else { theme.value };
 
         let canvas = Canvas::default()
-            .block(Block::default().borders(Borders::ALL).title(" gauge "))
+            .block(Block::default().borders(Borders::ALL).title(" termtaco "))
             .marker(ratatui::symbols::Marker::Braille)
             // Symmetric bounds keep the dial centered; the longer visual axis
             // gets a half-extent > 1.0 so a unit circle stays round.

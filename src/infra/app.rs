@@ -80,7 +80,7 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, window_cap: usize) -> io::
                     };
                     term.draw(|f| {
                         let placeholder = Paragraph::new(msg).block(
-                            Block::default().borders(Borders::ALL).title(" gauge "),
+                            Block::default().borders(Borders::ALL).title(" termtaco "),
                         );
                         f.render_widget(placeholder, f.size());
                     })?;
