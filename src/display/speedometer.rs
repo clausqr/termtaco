@@ -53,28 +53,31 @@ pub struct Theme {
     pub value: Color,
     pub stats: Color,
     pub marker: Color,
-    pub led_on: Color,
+    pub title: Color,
+    pub alarm: Color,
     pub led_off: Color,
 }
 
 impl Theme {
-    /// Default theme tuned for a dark terminal: light grey arc/ticks (not the
-    /// near-invisible ANSI "bright black"), with the annotations kept vivid.
+    /// Default theme for a dark terminal: the gauge (arc, ticks, numbers,
+    /// markers, needle, value, title) is white; `alarm` red is reserved for the
+    /// overflow state (LED lit, needle and value turn red).
     pub const fn dark() -> Self {
         Theme {
-            arc: Color::Gray,
-            tick_minor: Color::Gray,
+            arc: Color::White,
+            tick_minor: Color::White,
             tick_major: Color::White,
-            tick_label: Color::Gray,
-            needle: Color::LightRed,
+            tick_label: Color::White,
+            needle: Color::White,
             min_max: Color::White,
-            mean: Color::Yellow,
-            band: Color::Cyan,
+            mean: Color::White,
+            band: Color::White,
             hub: Color::White,
-            value: Color::LightRed,
+            value: Color::White,
             stats: Color::Gray,
-            marker: Color::LightGreen,
-            led_on: Color::LightRed,
+            marker: Color::White,
+            title: Color::White,
+            alarm: Color::LightRed,
             led_off: Color::DarkGray,
         }
     }
@@ -93,6 +96,8 @@ const OVERFLOW_HOLD: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Default)]
 pub struct Speedometer {
     theme: Theme,
+    /// Optional title shown at the top of the dial (set via `--title`).
+    title: Option<String>,
     /// The currently displayed scale `(lo, hi, step)`, held across frames so an
     /// overflow can pin the needle before the scale follows.
     scale: Option<(f64, f64, f64)>,
@@ -101,9 +106,14 @@ pub struct Speedometer {
 }
 
 impl Display for Speedometer {
+    fn set_title(&mut self, title: String) {
+        self.title = if title.is_empty() { None } else { Some(title) };
+    }
+
     fn render(&mut self, frame: &mut Frame, area: Rect, stats: &Stats) {
         let stats = *stats;
         let theme = self.theme;
+        let title = self.title.clone();
 
         // Target scale that would fit the current window.
         let target = nice_scale(&stats);
@@ -131,6 +141,11 @@ impl Display for Speedometer {
         let (lo, hi, step) = self.scale.unwrap();
         let (half_x, half_y) = aspect_bounds(area);
 
+        // Red is reserved for the alarm (overflow): the needle and value join
+        // the LED in red; everything else stays white.
+        let needle_color = if overflow { theme.alarm } else { theme.needle };
+        let value_color = if overflow { theme.alarm } else { theme.value };
+
         let canvas = Canvas::default()
             .block(Block::default().borders(Borders::ALL).title(" gauge "))
             .marker(ratatui::symbols::Marker::Braille)
@@ -144,8 +159,9 @@ impl Display for Speedometer {
                 draw_tick_numbers(ctx, lo, hi, step, &theme);
                 draw_markers(ctx, &theme);
                 draw_stat_ticks(ctx, &stats, lo, hi, &theme);
-                draw_needle(ctx, stats.last, lo, hi, &theme);
-                draw_labels(ctx, &stats, half_x, half_y, &theme);
+                draw_needle(ctx, stats.last, lo, hi, needle_color);
+                draw_labels(ctx, &stats, half_x, half_y, value_color, &theme);
+                draw_title(ctx, title.as_deref(), &theme);
                 draw_led(ctx, overflow, &theme);
             });
 
@@ -276,13 +292,26 @@ fn draw_scale_ticks(ctx: &mut Context, lo: f64, hi: f64, step: f64, theme: &Them
     }
 }
 
-/// Overflow LED on the right side of the dial. Lit red with an "OVF" tag while
-/// the gauge is pinned at full scale; a dim dot otherwise (an unlit LED).
+/// Overflow LED on the lower-right of the dial face. Lit red with an "OVF" tag
+/// while the gauge is pinned at full scale; a dim dot otherwise (an unlit LED).
 fn draw_led(ctx: &mut Context, on: bool, theme: &Theme) {
+    const LED_X: f64 = 0.40;
+    const LED_Y: f64 = -0.10;
     if on {
-        ctx.print(0.58, 0.10, Span::styled("● OVF", Style::default().fg(theme.led_on)));
+        ctx.print(LED_X, LED_Y, Span::styled("● OVF", Style::default().fg(theme.alarm)));
     } else {
-        ctx.print(0.58, 0.10, Span::styled("●", Style::default().fg(theme.led_off)));
+        ctx.print(LED_X, LED_Y, Span::styled("●", Style::default().fg(theme.led_off)));
+    }
+}
+
+/// Optional title across the top of the dial face, centered.
+fn draw_title(ctx: &mut Context, title: Option<&str>, theme: &Theme) {
+    if let Some(t) = title {
+        ctx.print(
+            -0.03 * t.len() as f64,
+            0.42,
+            Span::styled(t.to_string(), Style::default().fg(theme.title)),
+        );
     }
 }
 
@@ -322,15 +351,16 @@ fn draw_tick_numbers(ctx: &mut Context, lo: f64, hi: f64, step: f64, theme: &The
     }
 }
 
-/// Draw the needle from the hub to just inside the arc.
-fn draw_needle(ctx: &mut Context, v: f64, lo: f64, hi: f64, theme: &Theme) {
+/// Draw the needle from the hub to just inside the arc, in `color` (white
+/// normally, alarm red on overflow).
+fn draw_needle(ctx: &mut Context, v: f64, lo: f64, hi: f64, color: Color) {
     let tip = polar(R_ARC - 0.05, value_to_angle(v, lo, hi));
     ctx.draw(&CanvasLine {
         x1: 0.0,
         y1: 0.0,
         x2: tip.0,
         y2: tip.1,
-        color: theme.needle,
+        color,
     });
 }
 
@@ -368,11 +398,11 @@ fn draw_stat_ticks(ctx: &mut Context, s: &Stats, lo: f64, hi: f64, theme: &Theme
 /// The current value under the hub and the stats block in the corners. Corner
 /// stats are anchored to the actual canvas corners (`±half`) so they stay put
 /// regardless of the aspect padding.
-fn draw_labels(ctx: &mut Context, s: &Stats, half_x: f64, half_y: f64, theme: &Theme) {
+fn draw_labels(ctx: &mut Context, s: &Stats, half_x: f64, half_y: f64, value_color: Color, theme: &Theme) {
     ctx.print(
         -0.18,
         -0.32,
-        Span::styled(format!("{:.2}", s.last), Style::default().fg(theme.value)),
+        Span::styled(format!("{:.2}", s.last), Style::default().fg(value_color)),
     );
 
     let stat = |t: String| Span::styled(t, Style::default().fg(theme.stats));
@@ -474,6 +504,14 @@ mod tests {
         assert!(text.contains("n 200"), "count label missing");
         // Scale snaps to 30..45 with major numbers 30/35/40/45.
         assert!(text.contains("45") && text.contains("40"), "tick numbers missing");
+    }
+
+    #[test]
+    fn title_is_rendered() {
+        let mut display = Speedometer::default();
+        display.set_title("THROUGHPUT".to_string());
+        let text = render_text(&mut display, &stats(33.0, 30.0, 42.0));
+        assert!(text.contains("THROUGHPUT"), "title should be drawn");
     }
 
     #[test]

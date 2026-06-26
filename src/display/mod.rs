@@ -13,6 +13,9 @@ pub mod speedometer;
 pub trait Display {
     /// Draw the current stats into `area` of `frame`.
     fn render(&mut self, frame: &mut Frame, area: Rect, stats: &Stats);
+
+    /// Set an optional title. Default: ignored.
+    fn set_title(&mut self, _title: String) {}
 }
 
 /// Construct a display by name. Returns `None` for an unknown name so the

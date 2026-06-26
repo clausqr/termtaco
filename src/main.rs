@@ -15,6 +15,7 @@ use std::process::ExitCode;
 struct Args {
     window: usize,
     display: String,
+    title: Option<String>,
 }
 
 const HELP: &str = "\
@@ -26,6 +27,7 @@ USAGE:
 OPTIONS:
     --window N        samples retained for stats (default: 200)
     --display NAME    renderer to use (default: speedometer)
+    --title TEXT      title shown at the top of the dial
     -h, --help        print this help
 
 Reads one float per line from stdin; the first number on each line is used,
@@ -35,6 +37,7 @@ Quit with q, Esc, or Ctrl-C.";
 fn parse_args() -> Result<Args, ExitCode> {
     let mut window = 200usize;
     let mut display = String::from("speedometer");
+    let mut title: Option<String> = None;
     let mut it = std::env::args().skip(1);
 
     while let Some(a) = it.next() {
@@ -58,6 +61,15 @@ fn parse_args() -> Result<Args, ExitCode> {
             s if s.starts_with("--display=") => {
                 display = s["--display=".len()..].to_string();
             }
+            "--title" => {
+                title = it.next().or_else(|| {
+                    eprintln!("--title needs a value");
+                    std::process::exit(2);
+                });
+            }
+            s if s.starts_with("--title=") => {
+                title = Some(s["--title=".len()..].to_string());
+            }
             other => {
                 eprintln!("unknown argument: {other}\n\n{HELP}");
                 return Err(ExitCode::from(2));
@@ -70,7 +82,11 @@ fn parse_args() -> Result<Args, ExitCode> {
         return Err(ExitCode::from(2));
     }
 
-    Ok(Args { window, display })
+    Ok(Args {
+        window,
+        display,
+        title,
+    })
 }
 
 /// Upper bound on `--window`. The window is pre-allocated as a `VecDeque`, so
@@ -104,6 +120,10 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+
+    if let Some(t) = args.title {
+        display.set_title(t);
+    }
 
     match run(&mut *display, args.window) {
         Ok(()) => ExitCode::SUCCESS,
