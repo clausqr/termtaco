@@ -11,13 +11,23 @@ mod math;
 
 use std::io;
 use std::process::ExitCode;
+use std::time::Duration;
 
 struct Args {
     window: usize,
     display: String,
     title: Option<String>,
     include_zero: bool,
+    frame: Duration,
+    stale_after: Duration,
+    overflow_hold: Duration,
 }
+
+// CLI defaults for the runtime knobs.
+const DEFAULT_WINDOW: usize = 200;
+const DEFAULT_FPS: f64 = 30.0;
+const DEFAULT_STALE_SECS: f64 = 3.0;
+const DEFAULT_OVERFLOW_HOLD_SECS: f64 = 1.0;
 
 const HELP: &str = "\
 termtaco — a terminal tachometer; a tiny TUI speedometer for streaming values
@@ -26,21 +36,27 @@ USAGE:
     <producer> | termtaco [OPTIONS]
 
 OPTIONS:
-    --window N        samples retained for stats (default: 200)
-    --display NAME    renderer to use (default: speedometer)
-    --title TEXT      title shown at the top of the dial
-    --0, --zero       always keep 0 in the scale (e.g. a speedometer)
-    -h, --help        print this help
+    --window N           samples retained for stats (default: 200)
+    --display NAME       renderer to use (default: speedometer)
+    --title TEXT         title shown at the top of the dial
+    --0, --zero          always keep 0 in the scale (e.g. a speedometer)
+    --fps N              refresh rate, frames per second (default: 30)
+    --stale-after SECS   silence before the reading is flagged stale (default: 3)
+    --overflow-hold SECS hold a capped reading this long before rescaling (default: 1)
+    -h, --help           print this help
 
 Reads one float per line from stdin; the first number on each line is used,
 so it sits downstream of output like `average rate: 33.746`.
 Quit with q, Esc, or Ctrl-C.";
 
 fn parse_args() -> Result<Args, ExitCode> {
-    let mut window = 200usize;
+    let mut window = DEFAULT_WINDOW;
     let mut display = String::from("speedometer");
     let mut title: Option<String> = None;
     let mut include_zero = false;
+    let mut fps = DEFAULT_FPS;
+    let mut stale_secs = DEFAULT_STALE_SECS;
+    let mut overflow_secs = DEFAULT_OVERFLOW_HOLD_SECS;
     let mut it = std::env::args().skip(1);
 
     while let Some(a) = it.next() {
@@ -76,6 +92,22 @@ fn parse_args() -> Result<Args, ExitCode> {
             "--0" | "--zero" => {
                 include_zero = true;
             }
+            "--fps" => fps = parse_f64("--fps", it.next().as_deref(), 1.0, 240.0)?,
+            s if s.starts_with("--fps=") => {
+                fps = parse_f64("--fps", Some(&s["--fps=".len()..]), 1.0, 240.0)?
+            }
+            "--stale-after" => {
+                stale_secs = parse_f64("--stale-after", it.next().as_deref(), 0.1, 86_400.0)?
+            }
+            s if s.starts_with("--stale-after=") => {
+                stale_secs = parse_f64("--stale-after", Some(&s["--stale-after=".len()..]), 0.1, 86_400.0)?
+            }
+            "--overflow-hold" => {
+                overflow_secs = parse_f64("--overflow-hold", it.next().as_deref(), 0.0, 86_400.0)?
+            }
+            s if s.starts_with("--overflow-hold=") => {
+                overflow_secs = parse_f64("--overflow-hold", Some(&s["--overflow-hold=".len()..]), 0.0, 86_400.0)?
+            }
             other => {
                 eprintln!("unknown argument: {other}\n\n{HELP}");
                 return Err(ExitCode::from(2));
@@ -93,6 +125,9 @@ fn parse_args() -> Result<Args, ExitCode> {
         display,
         title,
         include_zero,
+        frame: Duration::from_secs_f64(1.0 / fps),
+        stale_after: Duration::from_secs_f64(stale_secs),
+        overflow_hold: Duration::from_secs_f64(overflow_secs),
     })
 }
 
@@ -105,6 +140,17 @@ fn parse_window(v: Option<&str>) -> Result<usize, ExitCode> {
         Some(n) if (1..=MAX_WINDOW).contains(&n) => Ok(n),
         _ => {
             eprintln!("--window needs an integer between 1 and {MAX_WINDOW}");
+            Err(ExitCode::from(2))
+        }
+    }
+}
+
+/// Parse a finite `f64` flag within `[min, max]`, or report a clear error.
+fn parse_f64(name: &str, v: Option<&str>, min: f64, max: f64) -> Result<f64, ExitCode> {
+    match v.and_then(|v| v.parse::<f64>().ok()) {
+        Some(n) if n.is_finite() && (min..=max).contains(&n) => Ok(n),
+        _ => {
+            eprintln!("{name} needs a number between {min} and {max}");
             Err(ExitCode::from(2))
         }
     }
@@ -132,8 +178,15 @@ fn main() -> ExitCode {
         display.set_title(t);
     }
     display.set_include_zero(args.include_zero);
+    display.set_overflow_hold(args.overflow_hold);
 
-    match run(&mut *display, args.window) {
+    let cfg = infra::app::LoopConfig {
+        window: args.window,
+        frame: args.frame,
+        stale_after: args.stale_after,
+    };
+
+    match run(&mut *display, &cfg) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("termtaco: {e}");
@@ -143,10 +196,10 @@ fn main() -> ExitCode {
 }
 
 /// Set up the terminal, run the loop, and always restore on the way out.
-fn run(display: &mut dyn display::Display, window: usize) -> io::Result<()> {
+fn run(display: &mut dyn display::Display, cfg: &infra::app::LoopConfig) -> io::Result<()> {
     infra::terminal::install_panic_hook();
     let mut term = infra::terminal::setup()?;
-    let res = infra::app::run(&mut term, display, window);
+    let res = infra::app::run(&mut term, display, cfg);
     let restore = infra::terminal::restore(&mut term);
     res.and(restore)
 }

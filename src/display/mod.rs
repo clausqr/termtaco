@@ -24,6 +24,10 @@ pub trait Display {
     /// Always keep 0 in the scale, even if the data never reaches it (e.g. a
     /// speedometer that should read from 0). Default: ignored.
     fn set_include_zero(&mut self, _include_zero: bool) {}
+
+    /// How long to hold a capped/overflow reading before rescaling to fit.
+    /// Default: ignored.
+    fn set_overflow_hold(&mut self, _hold: std::time::Duration) {}
 }
 
 /// Construct a display by name. Returns `None` for an unknown name so the
