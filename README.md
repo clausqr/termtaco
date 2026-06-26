@@ -110,9 +110,19 @@ seq 1 100 | awk '{print $1*0.7}' | ./target/release/gauge --window 50
 | `ramp`   | slow climb then reset, sweeps end to end and overflows     |
 | `random` | uniform noise                                              |
 | `rate`   | `average rate: N` lines, exercises the lenient parser      |
+| `burst`  | emit for a few seconds then go quiet, looping (see below)  |
 
 ```sh
 ./feed.sh noisy 0.05 | ./target/release/gauge
+```
+
+To watch the staleness behaviour, use `burst`: it feeds for `on` seconds then
+stays quiet (with stdin held open) for `off` seconds, looping. With the default
+`off` of 5 seconds, longer than the 3 second stale threshold, the gauge goes
+STALE during each quiet window and recovers when the feed resumes.
+
+```sh
+./feed.sh burst | ./target/release/gauge --title DEMO   # burst [delay] [on] [off]
 ```
 
 ## Reading the dial
@@ -123,8 +133,8 @@ seq 1 100 | awk '{print $1*0.7}' | ./target/release/gauge --window 50
   three quarter and full scale.
 - The stat ticks annotate window min, max, mean and the plus/minus one sigma
   band.
-- The big number under the hub is the current value. The corner block shows
-  min, max, mean, standard deviation and the sample count.
+- The big number under the hub is the current value. The sample count sits in
+  the top-right corner.
 - The LED on the lower right lights red on overflow; the needle and value turn
   red while the gauge is capped.
 

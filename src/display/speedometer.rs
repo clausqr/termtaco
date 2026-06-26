@@ -441,20 +441,20 @@ fn draw_stat_ticks(ctx: &mut Context, s: &Stats, lo: f64, hi: f64, theme: &Theme
     });
 }
 
-/// The current value under the hub and the stats block in the corners. Corner
-/// stats are anchored to the actual canvas corners (`±half`) so they stay put
-/// regardless of the aspect padding.
+/// The current value under the hub, plus the sample count in the top-right
+/// corner. The distributional stats (min, max, mean, ±1σ) are shown as tick
+/// marks on the arc, not as a text block.
 fn draw_labels(ctx: &mut Context, s: &Stats, half_x: f64, half_y: f64, value_color: Color, theme: &Theme) {
     ctx.print(
         -0.18,
         -0.32,
         Span::styled(format!("{:.2}", s.last), Style::default().fg(value_color)),
     );
-
-    let stat = |t: String| Span::styled(t, Style::default().fg(theme.stats));
-    ctx.print(-half_x + 0.03, half_y - 0.08, stat(format!("min {:.3}  max {:.3}", s.min, s.max)));
-    ctx.print(-half_x + 0.03, half_y - 0.22, stat(format!("mean {:.3}  sd {:.4}", s.mean, s.stddev)));
-    ctx.print(half_x - 0.30, half_y - 0.08, stat(format!("n {}", s.count)));
+    ctx.print(
+        half_x - 0.30,
+        half_y - 0.08,
+        Span::styled(format!("n {}", s.count), Style::default().fg(theme.stats)),
+    );
 }
 
 #[cfg(test)]
@@ -558,10 +558,11 @@ mod tests {
         let mut display = Speedometer::default();
         let text = render_text(&mut display, &stats(33.7, 30.0, 42.0));
         assert!(text.contains("33.70"), "current value label missing");
-        assert!(text.contains("min"), "stats block missing");
         assert!(text.contains("n 200"), "count label missing");
         // Scale snaps to 30..45 with major numbers 30/35/40/45.
         assert!(text.contains("45") && text.contains("40"), "tick numbers missing");
+        // The min/max/mean/sd text block is gone (stats live on the arc).
+        assert!(!text.contains("mean") && !text.contains("sd "), "stats block should be removed");
     }
 
     #[test]
