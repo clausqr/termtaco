@@ -22,6 +22,8 @@ pub struct LoopConfig {
     pub frame: Duration,
     /// Idle time after the last sample before the reading is flagged stale.
     pub stale_after: Duration,
+    /// Border label, also used for the pre-data placeholder block.
+    pub border_label: String,
 }
 
 /// Run the loop until the user quits or stdin closes and they quit.
@@ -84,9 +86,11 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
                         "waiting for data on stdin…"
                     };
                     term.draw(|f| {
-                        let placeholder = Paragraph::new(msg).block(
-                            Block::default().borders(Borders::ALL).title(" termtaco "),
-                        );
+                        let mut block = Block::default().borders(Borders::ALL);
+                        if !cfg.border_label.is_empty() {
+                            block = block.title(format!(" {} ", cfg.border_label));
+                        }
+                        let placeholder = Paragraph::new(msg).block(block);
                         f.render_widget(placeholder, f.size());
                     })?;
                 }

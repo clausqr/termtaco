@@ -17,6 +17,7 @@ struct Args {
     window: usize,
     display: String,
     title: Option<String>,
+    border_label: String,
     include_zero: bool,
     frame: Duration,
     stale_after: Duration,
@@ -28,6 +29,8 @@ const DEFAULT_WINDOW: usize = 200;
 const DEFAULT_FPS: f64 = 30.0;
 const DEFAULT_STALE_SECS: f64 = 3.0;
 const DEFAULT_OVERFLOW_HOLD_SECS: f64 = 1.0;
+// Empty by default: no border label unless --border-label is given.
+const DEFAULT_BORDER_LABEL: &str = "";
 
 const HELP: &str = "\
 termtaco — a terminal tachometer; a tiny TUI speedometer for streaming values
@@ -39,6 +42,7 @@ OPTIONS:
     --window N           samples retained for stats (default: 200)
     --display NAME       renderer to use (default: speedometer)
     --title TEXT         title shown at the top of the dial
+    --border-label TEXT  text in the dial's border (default: none)
     --0, --zero          always keep 0 in the scale (e.g. a speedometer)
     --fps N              refresh rate, frames per second (default: 30)
     --stale-after SECS   silence before the reading is flagged stale (default: 3)
@@ -53,6 +57,7 @@ fn parse_args() -> Result<Args, ExitCode> {
     let mut window = DEFAULT_WINDOW;
     let mut display = String::from("speedometer");
     let mut title: Option<String> = None;
+    let mut border_label = String::from(DEFAULT_BORDER_LABEL);
     let mut include_zero = false;
     let mut fps = DEFAULT_FPS;
     let mut stale_secs = DEFAULT_STALE_SECS;
@@ -89,6 +94,18 @@ fn parse_args() -> Result<Args, ExitCode> {
             s if s.starts_with("--title=") => {
                 title = Some(s["--title=".len()..].to_string());
             }
+            "--border-label" => {
+                border_label = match it.next() {
+                    Some(v) => v,
+                    None => {
+                        eprintln!("--border-label needs a value");
+                        return Err(ExitCode::from(2));
+                    }
+                };
+            }
+            s if s.starts_with("--border-label=") => {
+                border_label = s["--border-label=".len()..].to_string();
+            }
             "--0" | "--zero" => {
                 include_zero = true;
             }
@@ -124,6 +141,7 @@ fn parse_args() -> Result<Args, ExitCode> {
         window,
         display,
         title,
+        border_label,
         include_zero,
         frame: Duration::from_secs_f64(1.0 / fps),
         stale_after: Duration::from_secs_f64(stale_secs),
@@ -177,6 +195,7 @@ fn main() -> ExitCode {
     if let Some(t) = args.title {
         display.set_title(t);
     }
+    display.set_border_label(args.border_label.clone());
     display.set_include_zero(args.include_zero);
     display.set_overflow_hold(args.overflow_hold);
 
@@ -184,6 +203,7 @@ fn main() -> ExitCode {
         window: args.window,
         frame: args.frame,
         stale_after: args.stale_after,
+        border_label: args.border_label,
     };
 
     match run(&mut *display, &cfg) {

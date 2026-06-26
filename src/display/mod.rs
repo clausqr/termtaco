@@ -28,6 +28,9 @@ pub trait Display {
     /// How long to hold a capped/overflow reading before rescaling to fit.
     /// Default: ignored.
     fn set_overflow_hold(&mut self, _hold: std::time::Duration) {}
+
+    /// Text shown in the display's border. Default: ignored.
+    fn set_border_label(&mut self, _label: String) {}
 }
 
 /// Construct a display by name. Returns `None` for an unknown name so the

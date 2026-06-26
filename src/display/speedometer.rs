@@ -100,6 +100,8 @@ pub struct Speedometer {
     theme: Theme,
     /// Optional title shown at the top of the dial (set via `--title`).
     title: Option<String>,
+    /// Text shown in the dial's border (set via `--border-label`).
+    border_label: String,
     /// Always keep 0 in the scale (set via `--0`), e.g. for a speedometer.
     include_zero: bool,
     /// Feed has gone quiet; the reading is frozen, not live.
@@ -118,6 +120,7 @@ impl Default for Speedometer {
         Speedometer {
             theme: Theme::default(),
             title: None,
+            border_label: String::new(),
             include_zero: false,
             stale: false,
             overflow_hold: DEFAULT_OVERFLOW_HOLD,
@@ -130,6 +133,10 @@ impl Default for Speedometer {
 impl Display for Speedometer {
     fn set_title(&mut self, title: String) {
         self.title = if title.is_empty() { None } else { Some(title) };
+    }
+
+    fn set_border_label(&mut self, label: String) {
+        self.border_label = label;
     }
 
     fn set_stale(&mut self, stale: bool) {
@@ -148,6 +155,7 @@ impl Display for Speedometer {
         let stats = *stats;
         let theme = self.theme;
         let title = self.title.clone();
+        let border_label = self.border_label.clone();
         let stale = self.stale;
 
         // Target scale that would fit the current window.
@@ -189,8 +197,15 @@ impl Display for Speedometer {
         };
         let value_color = if overflow { theme.alarm } else { theme.value };
 
+        let block = if border_label.is_empty() {
+            Block::default().borders(Borders::ALL)
+        } else {
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {border_label} "))
+        };
         let canvas = Canvas::default()
-            .block(Block::default().borders(Borders::ALL).title(" termtaco "))
+            .block(block)
             .marker(ratatui::symbols::Marker::Braille)
             // Symmetric bounds keep the dial centered; the longer visual axis
             // gets a half-extent > 1.0 so a unit circle stays round.
@@ -203,7 +218,7 @@ impl Display for Speedometer {
                 draw_markers(ctx, &theme);
                 draw_stat_ticks(ctx, &stats, lo, hi, &theme);
                 draw_needle(ctx, stats.last, lo, hi, needle_color);
-                draw_labels(ctx, &stats, half_x, half_y, value_color, &theme);
+                draw_labels(ctx, &stats, value_color);
                 draw_title(ctx, title.as_deref(), &theme);
                 draw_led(ctx, overflow, &theme);
                 draw_stale(ctx, stale, &theme);
@@ -457,19 +472,13 @@ fn draw_stat_ticks(ctx: &mut Context, s: &Stats, lo: f64, hi: f64, theme: &Theme
     });
 }
 
-/// The current value under the hub, plus the sample count in the top-right
-/// corner. The distributional stats (min, max, mean, ±1σ) are shown as tick
-/// marks on the arc, not as a text block.
-fn draw_labels(ctx: &mut Context, s: &Stats, half_x: f64, half_y: f64, value_color: Color, theme: &Theme) {
+/// The current value under the hub. The distributional stats (min, max, mean,
+/// ±1σ) are shown as tick marks on the arc, not as a text block.
+fn draw_labels(ctx: &mut Context, s: &Stats, value_color: Color) {
     ctx.print(
         -0.18,
         -0.32,
         Span::styled(format!("{:.2}", s.last), Style::default().fg(value_color)),
-    );
-    ctx.print(
-        half_x - 0.30,
-        half_y - 0.08,
-        Span::styled(format!("n {}", s.count), Style::default().fg(theme.stats)),
     );
 }
 
@@ -574,11 +583,21 @@ mod tests {
         let mut display = Speedometer::default();
         let text = render_text(&mut display, &stats(33.7, 30.0, 42.0));
         assert!(text.contains("33.70"), "current value label missing");
-        assert!(text.contains("n 200"), "count label missing");
         // Scale snaps to 30..45 with major numbers 30/35/40/45.
         assert!(text.contains("45") && text.contains("40"), "tick numbers missing");
-        // The min/max/mean/sd text block is gone (stats live on the arc).
+        // The min/max/mean/sd text block and the sample count are gone (stats
+        // live on the arc; no n-count corner label).
         assert!(!text.contains("mean") && !text.contains("sd "), "stats block should be removed");
+        assert!(!text.contains("n 200"), "sample count should be removed");
+    }
+
+    #[test]
+    fn border_label_defaults_off_and_can_be_set() {
+        let mut off = Speedometer::default();
+        assert!(!render_text(&mut off, &stats(33.0, 30.0, 42.0)).contains("RPM"));
+        let mut on = Speedometer::default();
+        on.set_border_label("RPM".to_string());
+        assert!(render_text(&mut on, &stats(33.0, 30.0, 42.0)).contains("RPM"));
     }
 
     #[test]

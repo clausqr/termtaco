@@ -61,6 +61,7 @@ reads key events from the controlling tty.
 | `--window N`     | samples retained for the statistics window   | 200           |
 | `--display NAME` | renderer to use                              | `speedometer` |
 | `--title TEXT`   | title shown at the top of the dial           | none          |
+| `--border-label TEXT` | text in the dial's border               | none          |
 | `--0`, `--zero`  | always keep 0 in the scale (e.g. a speedometer) | off        |
 | `--fps N`        | refresh rate in frames per second            | 30            |
 | `--stale-after SECS` | silence before the reading is flagged stale | 3         |
@@ -136,8 +137,7 @@ the gauge goes STALE during each quiet window and recovers when the feed resumes
 - The five marks just outside the rim are fixed references at min, quarter, mid,
   three-quarter and full scale.
 - The stat ticks annotate window min, max, mean and the ±1σ band.
-- The big number under the hub is the current value. The sample count sits in the
-  top-right corner.
+- The big number under the hub is the current value.
 - The LED on the lower right lights red on overflow; the needle and value turn
   red while the gauge is capped. The LED on the lower left lights yellow when the
   feed is stale, and the needle greys out.
