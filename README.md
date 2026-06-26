@@ -1,13 +1,25 @@
-# gauge
+# termtaco
 
-A tiny terminal speedometer for streaming values. Pipe numbers in on stdin and
-`gauge` draws a live radial dial: a needle at the current value, an arc scale
-with numbered graduations, annotations for the window min, max, mean and the
-plus/minus one sigma band, and an overflow alarm.
+**A terminal tachometer.** Pipe a stream of numbers into `termtaco` and it draws
+a live radial **speedometer gauge** in your terminal — a needle at the current
+value, an arc scale with numbered graduations, window min/max/mean and a ±1σ
+band, plus an overflow alarm and a staleness signal. A tiny **TUI/CLI dial** for
+watching real-time metrics, rates, and any stream of floats at a glance.
 
-It is a generic, host side operator tool. It computes its own running statistics
-over a sliding window, so it sits downstream of any producer without coupling to
-the data source.
+[![crates.io](https://img.shields.io/crates/v/termtaco.svg)](https://crates.io/crates/termtaco)
+[![docs.rs](https://docs.rs/termtaco/badge.svg)](https://docs.rs/termtaco)
+[![license: MIT](https://img.shields.io/crates/l/termtaco.svg)](./LICENSE)
+
+<p align="center">
+  <img src="assets/demo.gif" alt="termtaco terminal speedometer gauge TUI demo — a live needle dial in the terminal" width="640">
+</p>
+
+`termtaco` reads one float per line from **stdin** (leniently — it grabs the
+first number on each line), keeps running statistics over a sliding window, and
+renders them as a 270° needle dial. It is a generic, host-side operator tool: it
+computes its own stats, so it sits downstream of *any* producer — a log tail, a
+benchmark, a packet counter, an ingest rate — without coupling to the source.
+Think `pv` or `ttyplot`, but a speedometer.
 
 ```
               .-""""-.
@@ -19,60 +31,27 @@ the data source.
                 17.00
 ```
 
-## Why
-
-Watching a live rate in a tmux pane usually means staring at a line of text:
-
-```
-average rate: 33.746
-        min: 0.014s max: 0.102s std dev: 0.01405s window: 10000
-```
-
-A dial reads at a glance: where the needle sits, how wide the spread is, whether
-the value just ran off the top of the scale. Nothing off the shelf draws a
-needle dial with annotated min/max/sigma marks (ttyplot and friends draw
-scrolling line plots, ratatui Gauge and rich/textual draw horizontal bars), so
-this is a small standalone tool.
-
-## Features
-
-- Radial 270 degree dial, drawn as a true circle at any pane size (the cell
-  aspect ratio is compensated, so it never renders as an ellipse).
-- Lenient input: one float per line on stdin, taking the first number found on
-  each line. It accepts both bare `33.7` and embedded `average rate: 33.746`.
-- Running min, max, mean and standard deviation over a sliding window.
-- Scale that snaps to round numbers at the data magnitude (18 rounds to 20,
-  49995 to 50000, 0.0023 to 0.0025), with numbered major ticks.
-- Five fixed reference markers at min, quarter, mid, three quarter and full
-  scale.
-- Optional title across the top of the dial.
-- Optional zero anchoring (`--0`): always keep 0 in the scale, so a speedometer
-  reads from 0 even when the data never gets near it.
-- Overflow alarm: when a value runs past full scale the needle pins at the top,
-  an LED lights, and the gauge holds there for one second before rescaling.
-- Staleness signal: if the feed goes quiet for a few seconds a yellow STALE LED
-  lights and the needle greys out, so a frozen needle is never mistaken for a
-  live one.
-- White by default; red is reserved for the overflow alarm, yellow for stale.
-- No async runtime. A stdin reader thread feeds the render loop over a channel.
-
 ## Install
 
-Requires a Rust toolchain. The project is pinned for Rust 1.72 (ratatui 0.24,
-crossterm 0.27); newer toolchains work too.
+```sh
+cargo install termtaco
+```
+
+Or build from source (the project is pinned for Rust 1.72 — ratatui 0.24,
+crossterm 0.27 — but newer toolchains work too):
 
 ```sh
 cargo build --release
-# binary at target/release/gauge
+# binary at target/release/termtaco
 ```
 
 ## Usage
 
 ```sh
-<producer> | gauge [OPTIONS]
+<producer> | termtaco [OPTIONS]
 ```
 
-`gauge` needs an interactive terminal for the display; pipe the data in and it
+`termtaco` needs an interactive terminal for the display; pipe the data in and it
 reads key events from the controlling tty.
 
 ### Options
@@ -91,18 +70,18 @@ Quit with `q`, `Esc`, or `Ctrl-C`.
 
 ```sh
 # Live demo with the bundled feeder
-./feed.sh sine | ./target/release/gauge --title RATE
+./feed.sh sine | termtaco --title RATE
 
 # Downstream of an existing text readout (first number per line is used)
-my-rate-printer | ./target/release/gauge --window 10000 --title "ingest/s"
+my-rate-printer | termtaco --window 10000 --title "ingest/s"
 
 # A quick static sweep
-seq 1 100 | awk '{print $1*0.7}' | ./target/release/gauge --window 50
+seq 1 100 | awk '{print $1*0.7}' | termtaco --window 50
 ```
 
 ### Test feeder
 
-`feed.sh` generates a stream for piping into the gauge. Modes:
+`feed.sh` generates a stream for piping into termtaco. Modes:
 
 | Mode     | What it produces                                            |
 | -------- | ---------------------------------------------------------- |
@@ -114,7 +93,7 @@ seq 1 100 | awk '{print $1*0.7}' | ./target/release/gauge --window 50
 | `burst`  | emit for a few seconds then go quiet, looping (see below)  |
 
 ```sh
-./feed.sh noisy 0.05 | ./target/release/gauge
+./feed.sh noisy 0.05 | termtaco
 ```
 
 To watch the staleness behaviour, use `burst`: it feeds for `on` seconds then
@@ -123,22 +102,55 @@ stays quiet (with stdin held open) for `off` seconds, looping. With the default
 STALE during each quiet window and recovers when the feed resumes.
 
 ```sh
-./feed.sh burst | ./target/release/gauge --title DEMO   # burst [delay] [on] [off]
+./feed.sh burst | termtaco --title DEMO   # burst [delay] [on] [off]
 ```
+
+## Features
+
+- **Radial 270° dial**, drawn as a true circle at any pane size (the cell aspect
+  ratio is compensated, so it never renders as an ellipse).
+- **Lenient input:** one float per line on stdin, taking the first number found
+  on each line. It accepts both bare `33.7` and embedded `average rate: 33.746`.
+- **Running stats:** min, max, mean and standard deviation over a sliding window.
+- **Self-scaling:** the scale snaps to round numbers at the data magnitude (18
+  rounds to 20, 49995 to 50000, 0.0023 to 0.0025), with numbered major ticks.
+- Five fixed reference markers at min, quarter, mid, three-quarter and full scale.
+- Optional title across the top of the dial.
+- **Zero anchoring** (`--0`): always keep 0 in the scale, so a speedometer reads
+  from 0 even when the data never gets near it.
+- **Overflow alarm:** when a value runs past full scale the needle pins at the
+  top, an LED lights, and the gauge holds there for one second before rescaling.
+- **Staleness signal:** if the feed goes quiet for a few seconds a yellow STALE
+  LED lights and the needle greys out, so a frozen needle is never mistaken for a
+  live one.
+- White by default; red is reserved for the overflow alarm, yellow for stale.
+- **No async runtime.** A stdin reader thread feeds the render loop over a channel.
 
 ## Reading the dial
 
 - The needle points at the latest value.
 - Numbered graduation ticks mark the scale; minor ticks subdivide each step.
 - The five marks just outside the rim are fixed references at min, quarter, mid,
-  three quarter and full scale.
-- The stat ticks annotate window min, max, mean and the plus/minus one sigma
-  band.
-- The big number under the hub is the current value. The sample count sits in
-  the top-right corner.
+  three-quarter and full scale.
+- The stat ticks annotate window min, max, mean and the ±1σ band.
+- The big number under the hub is the current value. The sample count sits in the
+  top-right corner.
 - The LED on the lower right lights red on overflow; the needle and value turn
-  red while the gauge is capped. The LED on the lower left lights yellow when
-  the feed is stale, and the needle greys out.
+  red while the gauge is capped. The LED on the lower left lights yellow when the
+  feed is stale, and the needle greys out.
+
+## How it compares
+
+Nothing off the shelf draws a *needle dial* with annotated min/max/σ marks:
+
+- **ttyplot** and friends draw scrolling line plots over time, not an instrument.
+- **gping** is a ping-specific line graph.
+- **ratatui's `Gauge`** and rich/textual draw horizontal progress bars.
+
+A dial reads instantaneous state at a glance — where the needle sits, how wide
+the spread is, whether the value just ran off the top — which line plots and bars
+don't surface as directly. That niche is why `termtaco` is a small standalone
+tool rather than a flag on something else.
 
 ## Architecture
 
@@ -153,8 +165,8 @@ src/
 
 - `math` knows nothing about rendering or I/O.
 - `infra` drives any `Display` and knows nothing about what is drawn.
-- `display` is the plugin boundary. Adding a renderer is a new file plus one
-  line in `make()`. All colors live in one `Theme` struct.
+- `display` is the plugin boundary. Adding a renderer is a new file plus one line
+  in `make()`. All colors live in one `Theme` struct.
 
 ## Toolchain notes
 
@@ -162,3 +174,7 @@ The host is Rust 1.72.1. Dependencies are pinned for that MSRV (`ratatui 0.24`,
 `crossterm 0.27`, and `unicode-segmentation` held at `1.10.1` in the lockfile,
 since newer releases require a much newer rustc). Build with the committed
 `Cargo.lock`.
+
+## License
+
+[MIT](./LICENSE)

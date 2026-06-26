@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# feed.sh — simple test feeder for gauge.
+# feed.sh — simple test feeder for termtaco.
 #
-# Generates a stream of numbers on stdout for piping into gauge, e.g.:
+# Generates a stream of numbers on stdout for piping into termtaco, e.g.:
 #     ./feed.sh sine | cargo run --release
-#     ./feed.sh sine | ./target/release/gauge --window 100
+#     ./feed.sh sine | ./target/release/termtaco --window 100
 #
 # Modes:
 #   sine    smooth oscillation around 50 (default) — best for watching the needle

@@ -1,12 +1,18 @@
 [package]
-name = "gauge"
+name = "termtaco"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.72"
-description = "A tiny TUI speedometer for streaming values read from stdin"
+description = "A terminal tachometer: pipe a stream of numbers into a live radial speedometer gauge in your TUI."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/clausqr/termtaco"
+homepage = "https://github.com/clausqr/termtaco"
+keywords = ["tui", "cli", "speedometer", "monitoring", "ratatui"]
+categories = ["command-line-utilities", "visualization"]
 
 [[bin]]
-name = "gauge"
+name = "termtaco"
 path = "src/main.rs"
 
 [dependencies]

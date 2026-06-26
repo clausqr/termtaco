@@ -1,1 +1,25 @@
 /target
+
+# AI assistants
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.anthropic/
+GEMINI.md
+.gemini/
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.github/copilot-instructions.md
+.codeium/
+.windsurf/
+.windsurfrules
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

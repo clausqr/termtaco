@@ -1,4 +1,4 @@
-//! `gauge` — a tiny TUI speedometer for streaming values.
+//! `termtaco` — a terminal tachometer; a tiny TUI speedometer for streaming values.
 //!
 //! Reads one float per line from stdin (lenient: extracts the first number it
 //! finds), maintains running min/max/mean/stddev over a window, and renders a
@@ -20,10 +20,10 @@ struct Args {
 }
 
 const HELP: &str = "\
-gauge — a tiny TUI speedometer for streaming values
+termtaco — a terminal tachometer; a tiny TUI speedometer for streaming values
 
 USAGE:
-    <producer> | gauge [OPTIONS]
+    <producer> | termtaco [OPTIONS]
 
 OPTIONS:
     --window N        samples retained for stats (default: 200)
@@ -136,7 +136,7 @@ fn main() -> ExitCode {
     match run(&mut *display, args.window) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("gauge: {e}");
+            eprintln!("termtaco: {e}");
             ExitCode::FAILURE
         }
     }
