@@ -1,5 +1,6 @@
 //! The render loop. Ingests values, maintains the window, and repaints the
-//! chosen [`Display`] at ~30 fps. Decoupled from any specific renderer.
+//! chosen [`Display`] at the configured frame rate. Decoupled from any specific
+//! renderer; all runtime knobs arrive via [`LoopConfig`].
 
 use std::io;
 use std::sync::mpsc::{self, TryRecvError};
@@ -13,23 +14,27 @@ use crate::infra::input;
 use crate::infra::terminal::Tui;
 use crate::math::stats::Window;
 
-const FRAME: Duration = Duration::from_millis(33); // ~30 fps
-
-/// After this long with no new sample, the reading is flagged stale so a frozen
-/// needle isn't mistaken for a live, steady value.
-const STALE_AFTER: Duration = Duration::from_secs(3);
+/// Runtime knobs for the render loop, all sourced from the CLI.
+pub struct LoopConfig {
+    /// Samples retained in the statistics window.
+    pub window: usize,
+    /// Minimum time between repaints (the inverse of the refresh rate).
+    pub frame: Duration,
+    /// Idle time after the last sample before the reading is flagged stale.
+    pub stale_after: Duration,
+}
 
 /// Run the loop until the user quits or stdin closes and they quit.
 ///
 /// `display` is any renderer; the loop never inspects it beyond `render`.
-pub fn run(term: &mut Tui, display: &mut dyn Display, window_cap: usize) -> io::Result<()> {
+pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::Result<()> {
     let (tx, rx) = mpsc::channel::<f64>();
     // rx is held here; on return it drops and the reader's next send fails,
     // which is what stops the reader thread.
     let _reader = input::spawn_reader(tx);
 
-    let mut window = Window::new(window_cap);
-    let mut last_draw = Instant::now() - FRAME;
+    let mut window = Window::new(cfg.window);
+    let mut last_draw = Instant::now() - cfg.frame;
     let mut dirty = true;
     let mut stdin_closed = false;
     let mut last_sample: Option<Instant> = None;
@@ -59,14 +64,14 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, window_cap: usize) -> io::
 
         // 2. Re-evaluate staleness; repaint once when it flips so a dead feed
         //    doesn't masquerade as a live, steady reading.
-        let now_stale = last_sample.is_some_and(|t| t.elapsed() >= STALE_AFTER);
+        let now_stale = last_sample.is_some_and(|t| t.elapsed() >= cfg.stale_after);
         if now_stale != stale {
             stale = now_stale;
             dirty = true;
         }
 
         // 3. Repaint when a frame is due.
-        if dirty && last_draw.elapsed() >= FRAME {
+        if dirty && last_draw.elapsed() >= cfg.frame {
             match window.stats() {
                 Some(stats) => {
                     display.set_stale(stale);
@@ -92,7 +97,8 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, window_cap: usize) -> io::
 
         // 4. Wait for a key (or the next frame deadline) on the controlling
         //    tty — stdin is busy carrying data, so events come from the tty.
-        let wait = FRAME
+        let wait = cfg
+            .frame
             .saturating_sub(last_draw.elapsed())
             .max(Duration::from_millis(1));
         if event::poll(wait)? {

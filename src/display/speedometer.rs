@@ -91,11 +91,11 @@ impl Default for Theme {
     }
 }
 
-/// How long the gauge stays pinned at full scale (overflow LED lit) before it
-/// rescales to fit a value that has run past the top of the scale.
-const OVERFLOW_HOLD: std::time::Duration = std::time::Duration::from_secs(1);
+/// Default for how long the gauge stays pinned at full scale (overflow LED lit)
+/// before it rescales to fit a value that has run past the top. Overridable via
+/// `--overflow-hold`.
+const DEFAULT_OVERFLOW_HOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
-#[derive(Default)]
 pub struct Speedometer {
     theme: Theme,
     /// Optional title shown at the top of the dial (set via `--title`).
@@ -104,11 +104,27 @@ pub struct Speedometer {
     include_zero: bool,
     /// Feed has gone quiet; the reading is frozen, not live.
     stale: bool,
+    /// How long to hold the capped/overflow state before rescaling.
+    overflow_hold: std::time::Duration,
     /// The currently displayed scale `(lo, hi, step)`, held across frames so an
     /// overflow can pin the needle before the scale follows.
     scale: Option<(f64, f64, f64)>,
     /// When the current run of overflow began (needle past full scale).
     overflow_since: Option<std::time::Instant>,
+}
+
+impl Default for Speedometer {
+    fn default() -> Self {
+        Speedometer {
+            theme: Theme::default(),
+            title: None,
+            include_zero: false,
+            stale: false,
+            overflow_hold: DEFAULT_OVERFLOW_HOLD,
+            scale: None,
+            overflow_since: None,
+        }
+    }
 }
 
 impl Display for Speedometer {
@@ -124,6 +140,10 @@ impl Display for Speedometer {
         self.include_zero = v;
     }
 
+    fn set_overflow_hold(&mut self, hold: std::time::Duration) {
+        self.overflow_hold = hold;
+    }
+
     fn render(&mut self, frame: &mut Frame, area: Rect, stats: &Stats) {
         let stats = *stats;
         let theme = self.theme;
@@ -135,11 +155,12 @@ impl Display for Speedometer {
         let (_, cur_hi, _) = *self.scale.get_or_insert(target);
 
         // Overflow = the live value has run past the top of the displayed scale.
-        // Hold there (needle capped, LED lit) for OVERFLOW_HOLD, then rescale.
+        // Hold there (needle capped, LED lit) for `overflow_hold`, then rescale.
+        let overflow_hold = self.overflow_hold;
         let overflow = if stats.last > cur_hi {
             let now = std::time::Instant::now();
             let since = *self.overflow_since.get_or_insert(now);
-            if now.duration_since(since) >= OVERFLOW_HOLD {
+            if now.duration_since(since) >= overflow_hold {
                 self.scale = Some(target); // held long enough → rescale to fit
                 self.overflow_since = None;
                 false

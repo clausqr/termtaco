@@ -62,6 +62,9 @@ reads key events from the controlling tty.
 | `--display NAME` | renderer to use                              | `speedometer` |
 | `--title TEXT`   | title shown at the top of the dial           | none          |
 | `--0`, `--zero`  | always keep 0 in the scale (e.g. a speedometer) | off        |
+| `--fps N`        | refresh rate in frames per second            | 30            |
+| `--stale-after SECS` | silence before the reading is flagged stale | 3         |
+| `--overflow-hold SECS` | hold a capped reading this long before rescaling | 1   |
 | `-h`, `--help`   | print help                                   |               |
 
 Quit with `q`, `Esc`, or `Ctrl-C`.
@@ -98,8 +101,8 @@ seq 1 100 | awk '{print $1*0.7}' | termtaco --window 50
 
 To watch the staleness behaviour, use `burst`: it feeds for `on` seconds then
 stays quiet (with stdin held open) for `off` seconds, looping. With the default
-`off` of 5 seconds, longer than the 3 second stale threshold, the gauge goes
-STALE during each quiet window and recovers when the feed resumes.
+`off` of 5 seconds, longer than the 3 second stale threshold (`--stale-after`),
+the gauge goes STALE during each quiet window and recovers when the feed resumes.
 
 ```sh
 ./feed.sh burst | termtaco --title DEMO   # burst [delay] [on] [off]
