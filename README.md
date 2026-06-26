@@ -8,7 +8,7 @@ watching real-time metrics, rates, and any stream of floats at a glance.
 
 [![crates.io](https://img.shields.io/crates/v/termtaco.svg)](https://crates.io/crates/termtaco)
 [![docs.rs](https://docs.rs/termtaco/badge.svg)](https://docs.rs/termtaco)
-[![license: MIT](https://img.shields.io/crates/l/termtaco.svg)](./LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 <p align="center">
   <img src="assets/demo.gif" alt="termtaco terminal speedometer gauge TUI demo — a live needle dial in the terminal" width="640">
@@ -20,16 +20,6 @@ renders them as a 270° needle dial. It is a generic, host-side operator tool: i
 computes its own stats, so it sits downstream of *any* producer — a log tail, a
 benchmark, a packet counter, an ingest rate — without coupling to the source.
 Think `pv` or `ttyplot`, but a speedometer.
-
-```
-              .-""""-.
-         50  /    |    \
-            |  TITLE    |
-            |    O      |    O = needle hub
-         0   \        /  100
-              `-....-'
-                17.00
-```
 
 ## Install
 
