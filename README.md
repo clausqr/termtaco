@@ -6,6 +6,7 @@ value, an arc scale with numbered graduations, window min/max/mean and a ±1σ
 band, plus an overflow alarm and a staleness signal. A tiny **TUI/CLI dial** for
 watching real-time metrics, rates, and any stream of floats at a glance.
 
+[![CI](https://github.com/clausqr/termtaco/actions/workflows/ci.yml/badge.svg)](https://github.com/clausqr/termtaco/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/termtaco.svg)](https://crates.io/crates/termtaco)
 [![docs.rs](https://docs.rs/termtaco/badge.svg)](https://docs.rs/termtaco)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)

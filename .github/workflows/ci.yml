@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    name: build & test (Rust 1.72.1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pin the exact MSRV the project targets; deps and Cargo.lock are tuned for it.
+      - name: Install Rust 1.72.1
+        uses: dtolnay/rust-toolchain@1.72.1
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # --locked enforces the committed Cargo.lock (incl. the unicode-segmentation
+      # pin), so CI fails on any accidental MSRV / dependency drift.
+      - name: Build
+        run: cargo build --locked --verbose
+
+      - name: Test
+        run: cargo test --locked --verbose
