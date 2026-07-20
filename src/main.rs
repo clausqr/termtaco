@@ -1,7 +1,8 @@
 //! `termtaco` — a terminal tachometer; a tiny TUI speedometer for streaming values.
 //!
-//! Reads one float per line from stdin (lenient: extracts the first number it
-//! finds), maintains running min/max/mean/stddev over a window, and renders a
+//! Reads one float per line from stdin (lenient: by default it extracts the
+//! first number it finds; `--parser` picks another strategy, e.g. `ping`),
+//! maintains running min/max/mean/stddev over a window, and renders a
 //! live radial dial. Three layers: `math` (stats), `infra` (stdin/terminal/
 //! loop), and `display` (pluggable renderers, default speedometer).
 
@@ -16,6 +17,7 @@ use std::time::Duration;
 struct Args {
     window: usize,
     display: String,
+    parser: infra::input::Parser,
     title: Option<String>,
     border_label: String,
     include_zero: bool,
@@ -41,6 +43,12 @@ USAGE:
 OPTIONS:
     --window N           samples retained for stats (default: 200)
     --display NAME       renderer to use (default: speedometer)
+    --parser SPEC        how to extract the value from each line (default: first)
+                           first      first number on the line
+                           last       last number on the line
+                           nth:N      N-th number on the line (1-based)
+                           key:NAME   number after 'NAME=' or 'NAME:'
+                           ping       RTT from ping output (the time= field)
     --title TEXT         title shown at the top of the dial
     --border-label TEXT  text in the dial's border (default: none)
     --0, --zero          always keep 0 in the scale (e.g. a speedometer)
@@ -49,13 +57,16 @@ OPTIONS:
     --overflow-hold SECS hold a capped reading this long before rescaling (default: 1)
     -h, --help           print this help
 
-Reads one float per line from stdin; the first number on each line is used,
-so it sits downstream of output like `average rate: 33.746`.
+Reads one float per line from stdin; by default the first number on each line
+is used, so it sits downstream of output like `average rate: 33.746`. Pick a
+different --parser when the value isn't first, e.g. `ping <host> | termtaco
+--parser ping` for a live latency dial.
 Quit with q, Esc, or Ctrl-C.";
 
 fn parse_args() -> Result<Args, ExitCode> {
     let mut window = DEFAULT_WINDOW;
     let mut display = String::from("speedometer");
+    let mut parser = infra::input::Parser::First;
     let mut title: Option<String> = None;
     let mut border_label = String::from(DEFAULT_BORDER_LABEL);
     let mut include_zero = false;
@@ -84,6 +95,12 @@ fn parse_args() -> Result<Args, ExitCode> {
             }
             s if s.starts_with("--display=") => {
                 display = s["--display=".len()..].to_string();
+            }
+            "--parser" => {
+                parser = parse_parser(it.next().as_deref())?;
+            }
+            s if s.starts_with("--parser=") => {
+                parser = parse_parser(Some(&s["--parser=".len()..]))?;
             }
             "--title" => {
                 title = it.next().or_else(|| {
@@ -140,6 +157,7 @@ fn parse_args() -> Result<Args, ExitCode> {
     Ok(Args {
         window,
         display,
+        parser,
         title,
         border_label,
         include_zero,
@@ -161,6 +179,18 @@ fn parse_window(v: Option<&str>) -> Result<usize, ExitCode> {
             Err(ExitCode::from(2))
         }
     }
+}
+
+/// Parse the `--parser` spec, or report a clear error.
+fn parse_parser(v: Option<&str>) -> Result<infra::input::Parser, ExitCode> {
+    let spec = v.ok_or_else(|| {
+        eprintln!("--parser needs a spec (one of: {})", infra::input::PARSER_SPECS);
+        ExitCode::from(2)
+    })?;
+    infra::input::Parser::from_spec(spec).map_err(|e| {
+        eprintln!("--parser: {e}");
+        ExitCode::from(2)
+    })
 }
 
 /// Parse a finite `f64` flag within `[min, max]`, or report a clear error.
@@ -204,6 +234,7 @@ fn main() -> ExitCode {
         frame: args.frame,
         stale_after: args.stale_after,
         border_label: args.border_label,
+        parser: args.parser,
     };
 
     match run(&mut *display, &cfg) {

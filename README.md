@@ -51,6 +51,7 @@ reads key events from the controlling tty.
 | ---------------- | -------------------------------------------- | ------------- |
 | `--window N`     | samples retained for the statistics window   | 200           |
 | `--display NAME` | renderer to use                              | `speedometer` |
+| `--parser SPEC`  | how to extract the value from each line (see below) | `first` |
 | `--title TEXT`   | title shown at the top of the dial           | none          |
 | `--border-label TEXT` | text in the dial's border               | none          |
 | `--0`, `--zero`  | always keep 0 in the scale (e.g. a speedometer) | off        |
@@ -61,6 +62,22 @@ reads key events from the controlling tty.
 
 Quit with `q`, `Esc`, or `Ctrl-C`.
 
+### Parsers
+
+By default termtaco uses the first number on each line, but some outputs put
+the interesting value elsewhere. `--parser` picks the extraction strategy:
+
+| Spec       | Value used                                                       |
+| ---------- | ---------------------------------------------------------------- |
+| `first`    | first number on the line (default)                               |
+| `last`     | last number on the line                                          |
+| `nth:N`    | N-th number on the line (1-based)                                |
+| `key:NAME` | number after `NAME=` or `NAME:` (spaces around the separator ok) |
+| `ping`     | round-trip time from `ping` output (the `time=` field)           |
+
+Lines where the parser finds nothing are skipped, so noise lines (headers,
+summaries) pass through harmlessly.
+
 ### Examples
 
 ```sh
@@ -69,6 +86,9 @@ Quit with `q`, `Esc`, or `Ctrl-C`.
 
 # Downstream of an existing text readout (first number per line is used)
 my-rate-printer | termtaco --window 10000 --title "ingest/s"
+
+# Network latency as a live dial: extract the RTT from each ping reply
+ping 8.8.8.8 | termtaco --parser ping --title "ping ms" --0
 
 # ROS 2 topic rate as a live dial. `ros2 topic hz` prints a multi-line block
 # per sample, so keep only the "average rate" line (--line-buffered flushes

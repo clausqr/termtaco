@@ -24,6 +24,8 @@ pub struct LoopConfig {
     pub stale_after: Duration,
     /// Border label, also used for the pre-data placeholder block.
     pub border_label: String,
+    /// How to extract a value from each input line.
+    pub parser: input::Parser,
 }
 
 /// Run the loop until the user quits or stdin closes and they quit.
@@ -33,7 +35,7 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
     let (tx, rx) = mpsc::channel::<f64>();
     // rx is held here; on return it drops and the reader's next send fails,
     // which is what stops the reader thread.
-    let _reader = input::spawn_reader(tx);
+    let _reader = input::spawn_reader(tx, cfg.parser.clone());
 
     let mut window = Window::new(cfg.window);
     let mut last_draw = Instant::now() - cfg.frame;
