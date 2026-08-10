@@ -1,0 +1,19 @@
+# Dracula — neon purple, pink and green.
+#   cp themes/dracula.theme ~/.config/termtaco/theme
+arc = blue
+tick_minor = dark_gray
+tick_major = cyan
+tick_label = white
+needle = magenta
+raw = cyan
+min_max = blue
+mean = green
+band = yellow
+hub = white
+value = green
+stats = gray
+marker = cyan
+title = magenta
+alarm = light_red
+led_off = dark_gray
+stale = yellow

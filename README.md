@@ -82,13 +82,23 @@ alarm = "#ff0055"
 
 Colors are ANSI names (`red`, `light_blue`, `dark_gray`, underscores optional,
 case-insensitive) or `#rrggbb` hex. Fields the file doesn't mention keep their
-default, so a one-line file is a valid theme. A ready-made colorful palette
-lives at [`themes/color.theme`](themes/color.theme); [`themes/bw.theme`](themes/bw.theme)
-spells out every field at its default, handy as a starting point:
+default, so a one-line file is a valid theme. [`themes/`](themes/) ships
+ready-made palettes to copy as-is or edit from:
+
+| Theme | |
+| --- | --- |
+| [`bw.theme`](themes/bw.theme) | every field at its plain default, spelled out as a starting point |
+| [`color.theme`](themes/color.theme) | a general colorful palette |
+| [`catppuccin-mocha.theme`](themes/catppuccin-mocha.theme) | soft pastels on a warm dark base |
+| [`dracula.theme`](themes/dracula.theme) | neon purple, pink, and green |
+| [`gruvbox.theme`](themes/gruvbox.theme) | warm retro, aqua arc, ember needle |
+| [`nord.theme`](themes/nord.theme) | frosty, low-contrast arctic blues |
+| [`solarized-dark.theme`](themes/solarized-dark.theme) | muted teal and amber on deep sea |
+| [`tokyo-night.theme`](themes/tokyo-night.theme) | cool blues and violet |
 
 ```sh
 mkdir -p ~/.config/termtaco
-cp themes/color.theme ~/.config/termtaco/theme
+cp themes/nord.theme ~/.config/termtaco/theme
 ```
 
 An absent file, or a line with an unknown field or an unparsable color, falls

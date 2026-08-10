@@ -233,4 +233,41 @@ mod tests {
         assert_eq!(t.alarm, bw.alarm);
         assert_eq!(t.stale, bw.stale);
     }
+
+    /// Every field name [`Theme::set`] recognizes — kept here, not derived,
+    /// so this test independently catches a typo in either place.
+    const FIELDS: &[&str] = &[
+        "arc", "tick_minor", "tick_major", "tick_label", "needle", "raw", "min_max", "mean", "band", "hub",
+        "value", "stats", "marker", "title", "alarm", "led_off", "stale",
+    ];
+
+    /// Every preset shipped under `themes/` should parse with no dropped
+    /// lines: each non-comment, non-blank line names a real field and a
+    /// color `parse_color` understands. Catches a typo'd key or a color name
+    /// our parser doesn't support before it ships silently broken.
+    #[test]
+    fn every_shipped_theme_sets_only_known_fields_with_valid_colors() {
+        let shipped: &[(&str, &str)] = &[
+            ("bw.theme", include_str!("../../../themes/bw.theme")),
+            ("color.theme", include_str!("../../../themes/color.theme")),
+            ("catppuccin-mocha.theme", include_str!("../../../themes/catppuccin-mocha.theme")),
+            ("dracula.theme", include_str!("../../../themes/dracula.theme")),
+            ("gruvbox.theme", include_str!("../../../themes/gruvbox.theme")),
+            ("nord.theme", include_str!("../../../themes/nord.theme")),
+            ("solarized-dark.theme", include_str!("../../../themes/solarized-dark.theme")),
+            ("tokyo-night.theme", include_str!("../../../themes/tokyo-night.theme")),
+        ];
+        for (name, src) in shipped {
+            for line in src.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let (key, value) = line.split_once('=').unwrap_or_else(|| panic!("{name}: not a `key = value` line: {line:?}"));
+                let key = key.trim();
+                assert!(FIELDS.contains(&key), "{name}: unknown field {key:?}");
+                assert!(parse_color(value.trim()).is_some(), "{name}: unparsable color for {key}: {value:?}");
+            }
+        }
+    }
 }

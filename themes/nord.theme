@@ -1,0 +1,19 @@
+# Nord — frosty, low-contrast arctic blues.
+#   cp themes/nord.theme ~/.config/termtaco/theme
+arc = light_blue
+tick_minor = dark_gray
+tick_major = cyan
+tick_label = white
+needle = light_red
+raw = blue
+min_max = blue
+mean = green
+band = magenta
+hub = white
+value = light_blue
+stats = gray
+marker = blue
+title = light_blue
+alarm = light_red
+led_off = dark_gray
+stale = yellow

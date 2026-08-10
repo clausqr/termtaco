@@ -1,0 +1,20 @@
+# Tokyo Night — cool blues and violet.
+# Colors resolve through your terminal palette: use with a Tokyo Night terminal colorscheme.
+#   cp themes/tokyo-night.theme ~/.config/termtaco/theme
+arc = blue
+tick_minor = dark_gray
+tick_major = cyan
+tick_label = white
+needle = yellow
+raw = light_blue
+min_max = blue
+mean = green
+band = magenta
+hub = white
+value = cyan
+stats = gray
+marker = blue
+title = magenta
+alarm = light_red
+led_off = dark_gray
+stale = yellow

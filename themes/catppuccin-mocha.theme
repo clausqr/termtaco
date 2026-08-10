@@ -1,0 +1,19 @@
+# Catppuccin Mocha — soft pastels on a warm dark base.
+#   cp themes/catppuccin-mocha.theme ~/.config/termtaco/theme
+arc = magenta
+tick_minor = dark_gray
+tick_major = blue
+tick_label = white
+needle = light_red
+raw = cyan
+min_max = blue
+mean = green
+band = yellow
+hub = white
+value = green
+stats = gray
+marker = magenta
+title = magenta
+alarm = light_red
+led_off = dark_gray
+stale = yellow

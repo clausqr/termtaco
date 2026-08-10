@@ -1,0 +1,19 @@
+# Solarized Dark — muted teal and amber on deep sea.
+#   cp themes/solarized-dark.theme ~/.config/termtaco/theme
+arc = cyan
+tick_minor = dark_gray
+tick_major = blue
+tick_label = white
+needle = yellow
+raw = blue
+min_max = cyan
+mean = green
+band = magenta
+hub = white
+value = green
+stats = gray
+marker = blue
+title = cyan
+alarm = light_red
+led_off = dark_gray
+stale = yellow
