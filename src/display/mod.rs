@@ -63,7 +63,7 @@ pub struct DisplayConfig {
     pub max_decay_target: f64,
     /// Time constant for a needle with mass. `None` snaps immediately.
     pub needle_inertia: Option<std::time::Duration>,
-    /// Theme name from the config file (see [`crate::infra::config`]), e.g.
+    /// Theme name from the theme file (see [`crate::infra::config`]), e.g.
     /// `"color"`. `None`, or a name the renderer doesn't recognize, falls
     /// back to that renderer's default theme.
     pub theme: Option<String>,

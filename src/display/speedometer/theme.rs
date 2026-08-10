@@ -52,7 +52,7 @@ impl Theme {
         }
     }
 
-    /// A colorful palette, opt-in via `theme = color` in the config file (see
+    /// A colorful palette, opt-in via `~/.config/termtaco/theme` (see
     /// [`crate::infra::config`]). Distinct hues per element so the gauge
     /// itself carries more information at a glance.
     pub const fn color() -> Self {
@@ -77,7 +77,7 @@ impl Theme {
         }
     }
 
-    /// Resolve a theme by name (e.g. from the config file). Unrecognized names
+    /// Resolve a theme by name (e.g. from the theme file). Unrecognized names
     /// return `None` so the caller can fall back to the default.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {

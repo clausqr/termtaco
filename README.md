@@ -71,15 +71,16 @@ Quit with `q`, `Esc`, or `Ctrl-C`.
 ### Theme
 
 The dial's palette is `bw` (monochrome, with red/yellow reserved for the
-overflow/stale alarms) by default. Opt into a colorful palette with a config
-file at `~/.config/termtaco/config`:
+overflow/stale alarms) by default. Opt into a colorful palette by writing the
+theme name to `~/.config/termtaco/theme`:
 
-```
-theme = color
+```sh
+mkdir -p ~/.config/termtaco
+echo color > ~/.config/termtaco/theme
 ```
 
-An absent file, key, or an unrecognized value falls back to `bw` — nothing to
-set up for the default look.
+An absent file or an unrecognized value falls back to `bw` — nothing to set
+up for the default look.
 
 ### Parsers
 
