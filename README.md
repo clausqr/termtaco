@@ -68,6 +68,19 @@ reads key events from the controlling tty.
 
 Quit with `q`, `Esc`, or `Ctrl-C`.
 
+### Theme
+
+The dial's palette is `bw` (monochrome, with red/yellow reserved for the
+overflow/stale alarms) by default. Opt into a colorful palette with a config
+file at `~/.config/termtaco/config`:
+
+```
+theme = color
+```
+
+An absent file, key, or an unrecognized value falls back to `bw` — nothing to
+set up for the default look.
+
 ### Parsers
 
 By default termtaco uses the first number on each line, but some outputs put
