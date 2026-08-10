@@ -3,16 +3,23 @@
 //! renderer; all runtime knobs arrive via [`LoopConfig`].
 
 use std::io;
-use std::sync::mpsc::{self, TryRecvError};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
 
-use crate::display::Display;
+use crate::display::{Display, Reading};
+use crate::infra::feed::Feed;
 use crate::infra::input;
 use crate::infra::terminal::Tui;
-use crate::math::stats::Window;
+use crate::math::kalman::Kalman;
+
+/// Floor on how long `event::poll` is asked to wait, so a frame deadline
+/// that's already passed (or nearly has) still yields a nonzero, non-busy
+/// wait rather than a zero-duration poll spinning the loop.
+const MIN_POLL_WAIT: Duration = Duration::from_millis(1);
 
 /// Runtime knobs for the render loop, all sourced from the CLI.
 pub struct LoopConfig {
@@ -26,87 +33,62 @@ pub struct LoopConfig {
     pub border_label: String,
     /// How to extract a value from each input line.
     pub parser: input::Parser,
+    /// Smooth the displayed value with a Kalman filter (stats stay raw).
+    pub kalman: bool,
+    /// Kalman process noise variance, used when `kalman` is set.
+    pub kalman_q: f64,
+    /// Kalman measurement noise variance, used when `kalman` is set.
+    pub kalman_r: f64,
+    /// Some display effects keep moving between measurements (the Kalman
+    /// estimate extrapolating along its velocity, the needle settling toward
+    /// a target with `--needle-inertia`), so repaint every frame rather than
+    /// only when new data arrives.
+    pub animate: bool,
 }
 
 /// Run the loop until the user quits or stdin closes and they quit.
 ///
 /// `display` is any renderer; the loop never inspects it beyond `render`.
+/// Ingestion, filtering, and staleness bookkeeping live in [`Feed`] — this
+/// function is orchestration: drive `Feed` each pass, repaint when it says
+/// to, and handle terminal I/O (which `Feed` deliberately knows nothing
+/// about, so its decision logic stays testable without a real tty).
 pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::Result<()> {
     let (tx, rx) = mpsc::channel::<f64>();
     // rx is held here; on return it drops and the reader's next send fails,
     // which is what stops the reader thread.
     let _reader = input::spawn_reader(tx, cfg.parser.clone());
 
-    let mut window = Window::new(cfg.window);
+    let mut feed = Feed::new(cfg.window, cfg.stale_after, cfg.kalman.then(|| Kalman::new(cfg.kalman_q, cfg.kalman_r)));
     let mut last_draw = Instant::now() - cfg.frame;
     let mut dirty = true;
-    let mut stdin_closed = false;
-    let mut last_sample: Option<Instant> = None;
-    let mut stale = false;
 
     loop {
-        // 1. Drain all pending samples so we never lag a fast producer.
-        loop {
-            match rx.try_recv() {
-                Ok(v) => {
-                    window.push(v);
-                    last_sample = Some(Instant::now());
-                    dirty = true;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    // stdin reached EOF. Keep the last frame, but remember it
-                    // so the placeholder can stop claiming we're still waiting.
-                    if !stdin_closed {
-                        stdin_closed = true;
-                        dirty = true;
-                    }
-                    break;
-                }
-            }
-        }
+        // `|=`, not `if`: both must run every pass regardless of the other's
+        // result — draining is independent of whether the filter/staleness
+        // state also wants a repaint this pass.
+        dirty |= feed.drain(&rx);
+        dirty |= feed.tick(cfg.animate);
 
-        // 2. Re-evaluate staleness; repaint once when it flips so a dead feed
-        //    doesn't masquerade as a live, steady reading.
-        let now_stale = last_sample.is_some_and(|t| t.elapsed() >= cfg.stale_after);
-        if now_stale != stale {
-            stale = now_stale;
-            dirty = true;
-        }
-
-        // 3. Repaint when a frame is due.
+        // Repaint when a frame is due.
         if dirty && last_draw.elapsed() >= cfg.frame {
-            match window.stats() {
-                Some(stats) => {
-                    display.set_stale(stale);
-                    term.draw(|f| display.render(f, f.size(), &stats))?;
+            match feed.snapshot() {
+                Some((stats, smoothed)) => {
+                    let reading = Reading { stats, smoothed, stale: feed.stale() };
+                    term.draw(|f| display.render(f, f.size(), &reading))?;
                 }
                 None => {
-                    let msg = if stdin_closed {
-                        "stdin closed with no data — press q to quit"
-                    } else {
-                        "waiting for data on stdin…"
-                    };
-                    term.draw(|f| {
-                        let mut block = Block::default().borders(Borders::ALL);
-                        if !cfg.border_label.is_empty() {
-                            block = block.title(format!(" {} ", cfg.border_label));
-                        }
-                        let placeholder = Paragraph::new(msg).block(block);
-                        f.render_widget(placeholder, f.size());
-                    })?;
+                    let stdin_closed = feed.stdin_closed();
+                    term.draw(|f| draw_placeholder(f, &cfg.border_label, stdin_closed))?;
                 }
             }
             last_draw = Instant::now();
             dirty = false;
         }
 
-        // 4. Wait for a key (or the next frame deadline) on the controlling
-        //    tty — stdin is busy carrying data, so events come from the tty.
-        let wait = cfg
-            .frame
-            .saturating_sub(last_draw.elapsed())
-            .max(Duration::from_millis(1));
+        // Wait for a key (or the next frame deadline) on the controlling
+        // tty — stdin is busy carrying data, so events come from the tty.
+        let wait = cfg.frame.saturating_sub(last_draw.elapsed()).max(MIN_POLL_WAIT);
         if event::poll(wait)? {
             match event::read()? {
                 Event::Key(k)
@@ -125,4 +107,19 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
         }
     }
     Ok(())
+}
+
+/// The pre-data / stdin-closed placeholder screen.
+fn draw_placeholder(f: &mut Frame, border_label: &str, stdin_closed: bool) {
+    let msg = if stdin_closed {
+        "stdin closed with no data — press q to quit"
+    } else {
+        "waiting for data on stdin…"
+    };
+    let mut block = Block::default().borders(Borders::ALL);
+    if !border_label.is_empty() {
+        block = block.title(format!(" {border_label} "));
+    }
+    let placeholder = Paragraph::new(msg).block(block);
+    f.render_widget(placeholder, f.size());
 }

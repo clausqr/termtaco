@@ -58,6 +58,12 @@ reads key events from the controlling tty.
 | `--fps N`        | refresh rate in frames per second            | 30            |
 | `--stale-after SECS` | silence before the reading is flagged stale | 3         |
 | `--overflow-hold SECS` | hold a capped reading this long before rescaling | 1   |
+| `--kalman`       | smooth the needle/value with a Kalman filter (stats stay raw) | off |
+| `--kalman-q Q`   | Kalman process noise variance per second     | 0.001         |
+| `--kalman-r R`   | Kalman measurement noise variance            | 0.1           |
+| `--max-decay SECS` | decay the max tick toward `max-decay-target × mean` once idle, instead of holding until it exits the window | off (holds) |
+| `--max-decay-target M` | equilibrium multiplier of the mean for `--max-decay` | 2.0    |
+| `--needle-inertia SECS` | give the needle mass: it lags the reading and settles over ~5× SECS | 0 (snaps) |
 | `-h`, `--help`   | print help                                   |               |
 
 Quit with `q`, `Esc`, or `Ctrl-C`.
@@ -143,6 +149,20 @@ the gauge goes STALE during each quiet window and recovers when the feed resumes
 - **Staleness signal:** if the feed goes quiet for a few seconds a yellow STALE
   LED lights and the needle greys out, so a frozen needle is never mistaken for a
   live one.
+- **Kalman smoothing** (`--kalman`): steadies the needle and value label on
+  noisy feeds; the min/max/mean/stddev ticks keep tracking the raw samples.
+- **Decaying max** (`--max-decay`): instead of holding rigidly until the peak
+  sample ages out of the window, the max tick exponentially decays toward
+  `max-decay-target × mean` once idle, snapping back up instantly on a fresh
+  spike.
+- **Raw sample tick:** a bold mark on the rim at the latest unfiltered
+  sample — with smoothing on you see the filtered needle *and* where the last
+  real measurement landed.
+- **Needle inertia** (`--needle-inertia`): the needle becomes a
+  critically-damped mass that settles toward the reading instead of
+  teleporting, layered on top of (and independent of) `--kalman` — Kalman
+  estimates what the signal is, inertia governs how fast the pointer can get
+  there.
 - White by default; red is reserved for the overflow alarm, yellow for stale.
 - **No async runtime.** A stdin reader thread feeds the render loop over a channel.
 
@@ -153,7 +173,10 @@ the gauge goes STALE during each quiet window and recovers when the feed resumes
 - The five marks just outside the rim are fixed references at min, quarter, mid,
   three-quarter and full scale.
 - The stat ticks annotate window min, max, mean and the ±1σ band.
-- The big number under the hub is the current value.
+- The bold tick on the rim is the latest raw sample; with `--kalman` and/or
+  `--needle-inertia` the needle lags it, showing the filtered/damped reading.
+- The big number under the hub is the current (filtered) value, not the
+  lagging needle position.
 - The LED on the lower right lights red on overflow; the needle and value turn
   red while the gauge is capped. The LED on the lower left lights yellow when the
   feed is stale, and the needle greys out.
@@ -177,7 +200,7 @@ Three layers with a single coupling point, the `Display` trait.
 
 ```
 src/
-  math/      ring buffer window plus running min/max/mean/stddev (pure)
+  math/      window stats, Kalman filter and needle dynamics (all pure)
   infra/     stdin reader thread, terminal lifecycle, ~30fps render loop
   display/   Display trait plus the themed speedometer renderer
 ```
