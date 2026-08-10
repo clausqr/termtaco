@@ -66,6 +66,7 @@ reads key events from the controlling tty.
 | `--needle-inertia SECS` | give the needle mass: it lags the reading and settles over ~5× SECS | 0 (snaps) |
 | `-h`, `--help`   | print help                                   |               |
 | `--theme NAME`   | built-in color preset (see below)            | `bw`          |
+| `--print-theme NAME` | print a preset's theme-file source to stdout, then exit |   |
 
 Quit with `q`, `Esc`, or `Ctrl-C`.
 
@@ -100,13 +101,17 @@ alarm = "#ff0055"
 
 Colors are ANSI names (`red`, `light_blue`, `dark_gray`, underscores optional,
 case-insensitive) or `#rrggbb` hex. Fields the file doesn't mention keep their
-default, so a one-line file is a valid theme; [`themes/`](themes/) has the
-built-in presets' source as a starting point:
+default, so a one-line file is a valid theme. `--print-theme NAME` dumps any
+built-in preset as a starting point — this works from a plain `cargo install
+termtaco` with nothing cloned, since the presets are compiled into the binary:
 
 ```sh
 mkdir -p ~/.config/termtaco
-cp themes/nord.theme ~/.config/termtaco/theme
+termtaco --print-theme nord > ~/.config/termtaco/theme
 ```
+
+(Working from a checkout of this repo, [`themes/`](themes/) has the same
+files directly: `cp themes/nord.theme ~/.config/termtaco/theme`.)
 
 `--theme` overrides the config file when both are given. An absent config
 file, or a line with an unknown field or an unparsable color, falls back to

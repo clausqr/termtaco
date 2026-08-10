@@ -83,6 +83,7 @@ OPTIONS:
     --theme NAME         built-in color preset (default: bw)
                            bw, color, catppuccin-mocha, dracula, gruvbox,
                            nord, solarized-dark, tokyo-night
+    --print-theme NAME   print a preset's theme-file source to stdout, then exit
     -h, --help           print this help
 
 Reads one float per line from stdin; by default the first number on each line
@@ -91,9 +92,10 @@ different --parser when the value isn't first, e.g. `ping <host> | termtaco
 --parser ping` for a live latency dial.
 
 --theme picks a built-in palette; for a fully custom one, write
-~/.config/termtaco/theme (one `field = color` line per dial element) — see
-themes/ in the repo for examples. --theme overrides that file when both are
-given.
+~/.config/termtaco/theme (one `field = color` line per dial element).
+--print-theme NAME dumps a preset as a starting point, e.g.
+`termtaco --print-theme nord > ~/.config/termtaco/theme`. --theme overrides
+that file when both are given.
 Quit with q, Esc, or Ctrl-C.";
 
 /// The value attached to a flag: the inline part of `--flag=value`, or the
@@ -136,6 +138,18 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         match (key, inline) {
             ("-h", None) | ("--help", None) => {
                 println!("{HELP}");
+                return Err(ExitCode::SUCCESS);
+            }
+            ("--print-theme", v) => {
+                let name = flag_value(v, &mut it).ok_or_else(|| {
+                    eprintln!("--print-theme needs a name (one of: {})", display::speedometer::PRESET_NAMES);
+                    ExitCode::from(2)
+                })?;
+                let content = display::speedometer::preset_content(&name).ok_or_else(|| {
+                    eprintln!("unknown theme '{name}' (available: {})", display::speedometer::PRESET_NAMES);
+                    ExitCode::from(2)
+                })?;
+                print!("{content}");
                 return Err(ExitCode::SUCCESS);
             }
             ("--window", v) => window = parse_window(flag_value(v, &mut it).as_deref())?,
@@ -419,6 +433,16 @@ mod tests {
     #[test]
     fn theme_without_a_value_returns_err_not_exit() {
         assert!(args(&["--theme"]).is_err());
+    }
+
+    #[test]
+    fn print_theme_without_a_value_errors() {
+        assert!(args(&["--print-theme"]).is_err());
+    }
+
+    #[test]
+    fn print_theme_unknown_name_errors() {
+        assert!(args(&["--print-theme", "bogus"]).is_err());
     }
 
     #[test]
