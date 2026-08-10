@@ -65,7 +65,7 @@ impl Speedometer {
     /// `None` here so `--title=""` draws no title, same as omitting the flag.
     pub fn new(cfg: &DisplayConfig) -> Self {
         Speedometer {
-            theme: cfg.theme.as_deref().and_then(Theme::from_name).unwrap_or_default(),
+            theme: cfg.theme_file.as_deref().map(Theme::from_file).unwrap_or_default(),
             title: cfg.title.clone().filter(|t| !t.is_empty()),
             border_label: cfg.border_label.clone(),
             include_zero: cfg.include_zero,
@@ -324,7 +324,7 @@ mod tests {
             max_decay: Some(Duration::from_secs(7)),
             max_decay_target: 3.5,
             needle_inertia: Some(Duration::from_millis(120)),
-            theme: Some("color".to_string()),
+            theme_file: Some("arc = cyan\n".to_string()),
         };
         let d = Speedometer::new(&cfg);
         assert_eq!(d.title.as_deref(), Some("RPM"));
@@ -334,12 +334,12 @@ mod tests {
         assert_eq!(d.max_decay, Some(Duration::from_secs(7)));
         assert_eq!(d.max_decay_target, 3.5);
         assert!(d.needle.pointer.is_some(), "needle inertia should arm the pointer");
-        assert_eq!(d.theme.arc, Theme::color().arc, "theme name should resolve to the color palette");
+        assert_eq!(d.theme.arc, ratatui::style::Color::Cyan, "theme file's arc override should apply");
     }
 
     #[test]
-    fn unknown_theme_name_falls_back_to_default() {
-        let cfg = DisplayConfig { theme: Some("neon".to_string()), ..Default::default() };
+    fn missing_theme_file_falls_back_to_default() {
+        let cfg = DisplayConfig { theme_file: None, ..Default::default() };
         let d = Speedometer::new(&cfg);
         assert_eq!(d.theme.arc, Theme::default().arc);
     }

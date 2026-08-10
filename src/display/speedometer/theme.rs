@@ -1,9 +1,20 @@
-//! Color palette for the speedometer dial.
+//! Color palette for the speedometer dial, customizable per element from
+//! `~/.config/termtaco/theme` (see [`crate::infra::config`] for where that
+//! file lives) — each line assigns one field a color, e.g.:
+//!
+//! ```text
+//! arc = cyan
+//! needle = yellow
+//! alarm = "#ff0055"
+//! ```
+//!
+//! Any field the file doesn't mention keeps its [`Theme::bw`] default, so a
+//! one-line file that only sets `needle` is a valid (if minimal) theme.
 
 use ratatui::style::Color;
 
-/// Color palette for the dial. Swap `Theme::default` (or add a constructor) to
-/// re-theme everything in one place.
+/// Color palette for the dial. One field per drawn element; see
+/// [`Theme::from_file`] for how a theme file maps onto these by name.
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub arc: Color,
@@ -30,6 +41,7 @@ impl Theme {
     /// Default theme for a dark terminal: the gauge (arc, ticks, numbers,
     /// markers, needle, value, title) is white; `alarm` red and `stale` yellow
     /// are reserved as semantic accents (overflow, staleness), not decoration.
+    /// This is also the base a theme file's overrides are applied on top of.
     pub const fn bw() -> Self {
         Theme {
             arc: Color::White,
@@ -52,38 +64,45 @@ impl Theme {
         }
     }
 
-    /// A colorful palette, opt-in via `~/.config/termtaco/theme` (see
-    /// [`crate::infra::config`]). Distinct hues per element so the gauge
-    /// itself carries more information at a glance.
-    pub const fn color() -> Self {
-        Theme {
-            arc: Color::Cyan,
-            tick_minor: Color::DarkGray,
-            tick_major: Color::Cyan,
-            tick_label: Color::White,
-            needle: Color::Yellow,
-            raw: Color::LightBlue,
-            min_max: Color::Blue,
-            mean: Color::Green,
-            band: Color::Magenta,
-            hub: Color::White,
-            value: Color::Green,
-            stats: Color::Gray,
-            marker: Color::Blue,
-            title: Color::Cyan,
-            alarm: Color::LightRed,
-            led_off: Color::DarkGray,
-            stale: Color::Yellow,
+    /// Build a theme from a theme file's content (see the module docs for the
+    /// format). Starts from [`Theme::bw`] and overrides only the fields the
+    /// file sets; unknown field names and unparsable colors are silently
+    /// skipped so a typo loses one element's customization, not the dial.
+    pub fn from_file(contents: &str) -> Self {
+        let mut theme = Self::bw();
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else { continue };
+            let Some(color) = parse_color(value.trim()) else { continue };
+            theme.set(key.trim(), color);
         }
+        theme
     }
 
-    /// Resolve a theme by name (e.g. from the theme file). Unrecognized names
-    /// return `None` so the caller can fall back to the default.
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "bw" => Some(Self::bw()),
-            "color" | "colour" => Some(Self::color()),
-            _ => None,
+    /// Assigns `color` to the field named `key`; unknown names are a no-op.
+    fn set(&mut self, key: &str, color: Color) {
+        match key {
+            "arc" => self.arc = color,
+            "tick_minor" => self.tick_minor = color,
+            "tick_major" => self.tick_major = color,
+            "tick_label" => self.tick_label = color,
+            "needle" => self.needle = color,
+            "raw" => self.raw = color,
+            "min_max" => self.min_max = color,
+            "mean" => self.mean = color,
+            "band" => self.band = color,
+            "hub" => self.hub = color,
+            "value" => self.value = color,
+            "stats" => self.stats = color,
+            "marker" => self.marker = color,
+            "title" => self.title = color,
+            "alarm" => self.alarm = color,
+            "led_off" => self.led_off = color,
+            "stale" => self.stale = color,
+            _ => {}
         }
     }
 }
@@ -94,28 +113,124 @@ impl Default for Theme {
     }
 }
 
+/// Parses one color value: a named ANSI color (`red`, `lightblue`,
+/// `dark_gray`, case-insensitive, `_` optional) or a `#rrggbb` hex triplet.
+/// Surrounding `"` or `'` quotes are stripped first, so `alarm = "#ff0055"`
+/// and `alarm = #ff0055` both work. `None` for anything else, so the caller
+/// can skip the line.
+fn parse_color(s: &str) -> Option<Color> {
+    let s = s.strip_prefix(['"', '\'']).and_then(|s| s.strip_suffix(['"', '\''])).unwrap_or(s);
+    if let Some(hex) = s.strip_prefix('#') {
+        return parse_hex(hex);
+    }
+    match s.to_ascii_lowercase().replace('_', "").as_str() {
+        "black" => Some(Color::Black),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "magenta" => Some(Color::Magenta),
+        "cyan" => Some(Color::Cyan),
+        "gray" | "grey" => Some(Color::Gray),
+        "darkgray" | "darkgrey" => Some(Color::DarkGray),
+        "lightred" => Some(Color::LightRed),
+        "lightgreen" => Some(Color::LightGreen),
+        "lightyellow" => Some(Color::LightYellow),
+        "lightblue" => Some(Color::LightBlue),
+        "lightmagenta" => Some(Color::LightMagenta),
+        "lightcyan" => Some(Color::LightCyan),
+        "white" => Some(Color::White),
+        _ => None,
+    }
+}
+
+/// Parses a 6-hex-digit RGB triplet (the leading `#` already stripped).
+fn parse_hex(hex: &str) -> Option<Color> {
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn from_name_resolves_known_themes() {
-        assert!(matches!(Theme::from_name("bw"), Some(_)));
-        assert!(matches!(Theme::from_name("color"), Some(_)));
-        assert!(matches!(Theme::from_name("colour"), Some(_)));
+    fn empty_file_is_bw() {
+        let t = Theme::from_file("");
+        assert_eq!(t.arc, Theme::bw().arc);
+        assert_eq!(t.needle, Theme::bw().needle);
     }
 
     #[test]
-    fn from_name_rejects_unknown() {
-        assert!(Theme::from_name("neon").is_none());
-        assert!(Theme::from_name("").is_none());
+    fn overrides_only_the_fields_it_sets() {
+        let t = Theme::from_file("needle = yellow\narc = cyan\n");
+        assert_eq!(t.needle, Color::Yellow);
+        assert_eq!(t.arc, Color::Cyan);
+        // Untouched fields keep the bw default.
+        assert_eq!(t.title, Theme::bw().title);
     }
 
     #[test]
-    fn default_is_bw() {
-        let default = Theme::default();
+    fn ignores_comments_blank_lines_and_unknown_keys() {
+        let t = Theme::from_file("# a comment\n\nbogus_field = red\nneedle = yellow\n");
+        assert_eq!(t.needle, Color::Yellow);
+        assert_eq!(t.arc, Theme::bw().arc);
+    }
+
+    #[test]
+    fn unparsable_color_leaves_the_default() {
+        let t = Theme::from_file("needle = not-a-color\n");
+        assert_eq!(t.needle, Theme::bw().needle);
+    }
+
+    #[test]
+    fn parses_hex_colors() {
+        let t = Theme::from_file("needle = #ff0055\n");
+        assert_eq!(t.needle, Color::Rgb(0xff, 0x00, 0x55));
+    }
+
+    #[test]
+    fn strips_surrounding_quotes() {
+        let t = Theme::from_file("needle = \"#ff0055\"\narc = 'cyan'\n");
+        assert_eq!(t.needle, Color::Rgb(0xff, 0x00, 0x55));
+        assert_eq!(t.arc, Color::Cyan);
+    }
+
+    #[test]
+    fn color_names_are_case_insensitive_and_underscore_optional() {
+        assert_eq!(parse_color("LightBlue"), Some(Color::LightBlue));
+        assert_eq!(parse_color("light_blue"), Some(Color::LightBlue));
+        assert_eq!(parse_color("DARK_GRAY"), Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn shipped_color_theme_parses_and_overrides_every_field() {
+        // themes/color.theme, the example users copy to
+        // ~/.config/termtaco/theme, should parse cleanly and actually set
+        // every field (i.e. not silently typo'd against the field names in
+        // `set`).
+        let src = include_str!("../../../themes/color.theme");
+        let t = Theme::from_file(src);
+        assert_eq!(t.arc, Color::Cyan);
+        assert_eq!(t.needle, Color::Yellow);
+        assert_eq!(t.alarm, Color::LightRed);
+        assert_eq!(t.stale, Color::Yellow);
+        assert_eq!(t.value, Color::Green);
+        assert_eq!(t.tick_minor, Color::DarkGray);
+    }
+
+    #[test]
+    fn shipped_bw_theme_matches_the_built_in_default() {
+        let src = include_str!("../../../themes/bw.theme");
+        let t = Theme::from_file(src);
         let bw = Theme::bw();
-        assert_eq!(default.arc, bw.arc);
-        assert_eq!(default.needle, bw.needle);
+        assert_eq!(t.arc, bw.arc);
+        assert_eq!(t.alarm, bw.alarm);
+        assert_eq!(t.stale, bw.stale);
     }
 }

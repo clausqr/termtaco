@@ -257,7 +257,7 @@ fn main() -> ExitCode {
         max_decay: args.max_decay,
         max_decay_target: args.max_decay_target,
         needle_inertia: args.needle_inertia,
-        theme: infra::config::theme_name(),
+        theme_file: infra::config::theme_file(),
     };
 
     let mut display = match display::make(&args.display, &display_cfg) {

@@ -70,17 +70,30 @@ Quit with `q`, `Esc`, or `Ctrl-C`.
 
 ### Theme
 
-The dial's palette is `bw` (monochrome, with red/yellow reserved for the
-overflow/stale alarms) by default. Opt into a colorful palette by writing the
-theme name to `~/.config/termtaco/theme`:
+The dial's palette is plain white by default (red/yellow are reserved for the
+overflow/stale alarms). Customize it with `~/.config/termtaco/theme`: one
+`field = color` line per element, e.g.
+
+```
+needle = yellow
+arc = cyan
+alarm = "#ff0055"
+```
+
+Colors are ANSI names (`red`, `light_blue`, `dark_gray`, underscores optional,
+case-insensitive) or `#rrggbb` hex. Fields the file doesn't mention keep their
+default, so a one-line file is a valid theme. A ready-made colorful palette
+lives at [`themes/color.theme`](themes/color.theme); [`themes/bw.theme`](themes/bw.theme)
+spells out every field at its default, handy as a starting point:
 
 ```sh
 mkdir -p ~/.config/termtaco
-echo color > ~/.config/termtaco/theme
+cp themes/color.theme ~/.config/termtaco/theme
 ```
 
-An absent file or an unrecognized value falls back to `bw` — nothing to set
-up for the default look.
+An absent file, or a line with an unknown field or an unparsable color, falls
+back to the default for that one field — nothing to set up for the default
+look, and a typo can't break the dial.
 
 ### Parsers
 

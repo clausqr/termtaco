@@ -1,5 +1,6 @@
-//! Theme selection: `~/.config/termtaco/theme`, a file whose entire content
-//! is the theme name (e.g. `color`). Nothing to parse.
+//! Locates and reads the theme file: `~/.config/termtaco/theme`. Parsing its
+//! `key = color` lines into a [`crate::display::speedometer::Theme`] is the
+//! theme module's job — this is just the filesystem lookup.
 
 use std::fs;
 use std::path::PathBuf;
@@ -14,34 +15,8 @@ fn theme_path() -> Option<PathBuf> {
     Some(base.join("termtaco").join("theme"))
 }
 
-/// The trimmed content of the theme file, e.g. `Some("color")`. `None` if the
-/// file or its containing directories don't exist, or the file is empty —
+/// The raw content of the theme file, unparsed. `None` if it doesn't exist —
 /// callers fall back to the default theme.
-pub fn theme_name() -> Option<String> {
-    theme_name_from(&fs::read_to_string(theme_path()?).ok()?)
-}
-
-/// Parses `theme_name`'s file format from an already-read string, so the
-/// parsing logic is testable without touching the filesystem or env vars.
-fn theme_name_from(contents: &str) -> Option<String> {
-    let trimmed = contents.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn trims_surrounding_whitespace_and_newline() {
-        assert_eq!(theme_name_from("color\n"), Some("color".to_string()));
-        assert_eq!(theme_name_from("  color  \n"), Some("color".to_string()));
-    }
-
-    #[test]
-    fn empty_or_blank_file_is_none() {
-        assert_eq!(theme_name_from(""), None);
-        assert_eq!(theme_name_from("\n"), None);
-        assert_eq!(theme_name_from("   "), None);
-    }
+pub fn theme_file() -> Option<String> {
+    fs::read_to_string(theme_path()?).ok()
 }
