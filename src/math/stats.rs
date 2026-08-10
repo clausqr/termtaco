@@ -83,8 +83,9 @@ impl Window {
         // Population standard deviation: σ = sqrt((1/n)·Σ(xᵢ−μ)²).
         let stddev = (var_acc / n as f64).sqrt();
 
+        let last = *self.buf.back().unwrap();
         Some(Stats {
-            last: *self.buf.back().unwrap(),
+            last,
             min,
             max,
             mean,
