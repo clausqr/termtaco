@@ -1,6 +1,9 @@
-//! Color palette for the speedometer dial, customizable per element from
-//! `~/.config/termtaco/theme` (see [`crate::infra::config`] for where that
-//! file lives) — each line assigns one field a color, e.g.:
+//! Color palette for the speedometer dial.
+//!
+//! Selected with `--theme NAME` for a built-in preset (baked into the binary
+//! at compile time from `themes/*.theme`, so it works with nothing on disk —
+//! see [`PRESETS`]), or fully customized via `~/.config/termtaco/theme` (see
+//! [`crate::infra::config`]) — one `field = color` line per element:
 //!
 //! ```text
 //! arc = cyan
@@ -8,8 +11,10 @@
 //! alarm = "#ff0055"
 //! ```
 //!
-//! Any field the file doesn't mention keeps its [`Theme::bw`] default, so a
-//! one-line file that only sets `needle` is a valid (if minimal) theme.
+//! Colors are ANSI names (`red`, `light_blue`, `dark_gray`, `_` optional,
+//! case-insensitive) or `#rrggbb` hex. Any field left unmentioned keeps its
+//! [`Theme::bw`] default, so a one-line file is a valid (if minimal) theme —
+//! and `--theme` takes priority over the config file when both are given.
 
 use ratatui::style::Color;
 
@@ -35,6 +40,30 @@ pub struct Theme {
     pub alarm: Color,
     pub led_off: Color,
     pub stale: Color,
+}
+
+/// Built-in theme presets, embedded at compile time from the repo's
+/// `themes/*.theme` files so `--theme NAME` works without anything installed
+/// on disk. `("bw", ..)` is included even though it's identical to
+/// [`Theme::bw`], so `--theme bw` can explicitly override a config file.
+const PRESETS: &[(&str, &str)] = &[
+    ("bw", include_str!("../../../themes/bw.theme")),
+    ("color", include_str!("../../../themes/color.theme")),
+    ("catppuccin-mocha", include_str!("../../../themes/catppuccin-mocha.theme")),
+    ("dracula", include_str!("../../../themes/dracula.theme")),
+    ("gruvbox", include_str!("../../../themes/gruvbox.theme")),
+    ("nord", include_str!("../../../themes/nord.theme")),
+    ("solarized-dark", include_str!("../../../themes/solarized-dark.theme")),
+    ("tokyo-night", include_str!("../../../themes/tokyo-night.theme")),
+];
+
+/// Names accepted by `--theme`, for help/error messages.
+pub const PRESET_NAMES: &str = "bw, color, catppuccin-mocha, dracula, gruvbox, nord, solarized-dark, tokyo-night";
+
+/// The embedded content of a built-in preset by name (see [`PRESETS`]).
+/// `None` if `name` isn't one of [`PRESET_NAMES`].
+pub fn preset_content(name: &str) -> Option<&'static str> {
+    PRESETS.iter().find(|(n, _)| *n == name).map(|(_, src)| *src)
 }
 
 impl Theme {
@@ -209,25 +238,20 @@ mod tests {
     }
 
     #[test]
-    fn shipped_color_theme_parses_and_overrides_every_field() {
-        // themes/color.theme, the example users copy to
-        // ~/.config/termtaco/theme, should parse cleanly and actually set
-        // every field (i.e. not silently typo'd against the field names in
-        // `set`).
-        let src = include_str!("../../../themes/color.theme");
-        let t = Theme::from_file(src);
-        assert_eq!(t.arc, Color::Cyan);
-        assert_eq!(t.needle, Color::Yellow);
-        assert_eq!(t.alarm, Color::LightRed);
-        assert_eq!(t.stale, Color::Yellow);
-        assert_eq!(t.value, Color::Green);
-        assert_eq!(t.tick_minor, Color::DarkGray);
+    fn preset_content_resolves_known_names() {
+        assert_eq!(Theme::from_file(preset_content("color").unwrap()).arc, Color::Cyan);
+        assert_eq!(Theme::from_file(preset_content("nord").unwrap()).arc, Color::LightBlue);
     }
 
     #[test]
-    fn shipped_bw_theme_matches_the_built_in_default() {
-        let src = include_str!("../../../themes/bw.theme");
-        let t = Theme::from_file(src);
+    fn preset_content_rejects_unknown_names() {
+        assert!(preset_content("neon").is_none());
+        assert!(preset_content("").is_none());
+    }
+
+    #[test]
+    fn bw_preset_matches_the_built_in_default() {
+        let t = Theme::from_file(preset_content("bw").unwrap());
         let bw = Theme::bw();
         assert_eq!(t.arc, bw.arc);
         assert_eq!(t.alarm, bw.alarm);
@@ -241,29 +265,24 @@ mod tests {
         "value", "stats", "marker", "title", "alarm", "led_off", "stale",
     ];
 
-    /// Every preset shipped under `themes/` should parse with no dropped
-    /// lines: each non-comment, non-blank line names a real field and a
-    /// color `parse_color` understands. Catches a typo'd key or a color name
-    /// our parser doesn't support before it ships silently broken.
+    /// Every embedded preset should parse with no dropped lines: each
+    /// non-comment, non-blank line names a real field and a color
+    /// `parse_color` understands. Catches a typo'd key or a color name our
+    /// parser doesn't support before it ships silently broken — and, since
+    /// `PRESET_NAMES` is hand-kept, that the two stay in sync with `PRESETS`.
     #[test]
-    fn every_shipped_theme_sets_only_known_fields_with_valid_colors() {
-        let shipped: &[(&str, &str)] = &[
-            ("bw.theme", include_str!("../../../themes/bw.theme")),
-            ("color.theme", include_str!("../../../themes/color.theme")),
-            ("catppuccin-mocha.theme", include_str!("../../../themes/catppuccin-mocha.theme")),
-            ("dracula.theme", include_str!("../../../themes/dracula.theme")),
-            ("gruvbox.theme", include_str!("../../../themes/gruvbox.theme")),
-            ("nord.theme", include_str!("../../../themes/nord.theme")),
-            ("solarized-dark.theme", include_str!("../../../themes/solarized-dark.theme")),
-            ("tokyo-night.theme", include_str!("../../../themes/tokyo-night.theme")),
-        ];
-        for (name, src) in shipped {
+    fn every_preset_sets_only_known_fields_with_valid_colors() {
+        let names: Vec<&str> = PRESET_NAMES.split(", ").collect();
+        assert_eq!(names.len(), PRESETS.len(), "PRESET_NAMES has drifted from PRESETS");
+        for (name, src) in PRESETS {
+            assert!(names.contains(name), "PRESETS has {name:?} but PRESET_NAMES doesn't list it");
             for line in src.lines() {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') {
                     continue;
                 }
-                let (key, value) = line.split_once('=').unwrap_or_else(|| panic!("{name}: not a `key = value` line: {line:?}"));
+                let (key, value) =
+                    line.split_once('=').unwrap_or_else(|| panic!("{name}: not a `key = value` line: {line:?}"));
                 let key = key.trim();
                 assert!(FIELDS.contains(&key), "{name}: unknown field {key:?}");
                 assert!(parse_color(value.trim()).is_some(), "{name}: unparsable color for {key}: {value:?}");

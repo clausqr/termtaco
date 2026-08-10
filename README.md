@@ -65,14 +65,32 @@ reads key events from the controlling tty.
 | `--max-decay-target M` | equilibrium multiplier of the mean for `--max-decay` | 2.0    |
 | `--needle-inertia SECS` | give the needle mass: it lags the reading and settles over ~5× SECS | 0 (snaps) |
 | `-h`, `--help`   | print help                                   |               |
+| `--theme NAME`   | built-in color preset (see below)            | `bw`          |
 
 Quit with `q`, `Esc`, or `Ctrl-C`.
 
 ### Theme
 
 The dial's palette is plain white by default (red/yellow are reserved for the
-overflow/stale alarms). Customize it with `~/.config/termtaco/theme`: one
-`field = color` line per element, e.g.
+overflow/stale alarms). Pick a built-in preset by name, no files needed:
+
+```sh
+./feed.sh sine | termtaco --theme nord
+```
+
+| Preset | |
+| --- | --- |
+| `bw` | plain white/gray — the default |
+| `color` | a general colorful palette |
+| `catppuccin-mocha` | soft pastels on a warm dark base |
+| `dracula` | neon purple, pink, and green |
+| `gruvbox` | warm retro, aqua arc, ember needle |
+| `nord` | frosty, low-contrast arctic blues |
+| `solarized-dark` | muted teal and amber on deep sea |
+| `tokyo-night` | cool blues and violet |
+
+For a fully custom palette, write `~/.config/termtaco/theme`: one
+`field = color` line per dial element, e.g.
 
 ```
 needle = yellow
@@ -82,19 +100,17 @@ alarm = "#ff0055"
 
 Colors are ANSI names (`red`, `light_blue`, `dark_gray`, underscores optional,
 case-insensitive) or `#rrggbb` hex. Fields the file doesn't mention keep their
-default, so a one-line file is a valid theme. [`themes/`](themes/) ships
-ready-made palettes to copy as-is or edit from:
+default, so a one-line file is a valid theme; [`themes/`](themes/) has the
+built-in presets' source as a starting point:
 
-| Theme | |
-| --- | --- |
-| [`bw.theme`](themes/bw.theme) | every field at its plain default, spelled out as a starting point |
-| [`color.theme`](themes/color.theme) | a general colorful palette |
-| [`catppuccin-mocha.theme`](themes/catppuccin-mocha.theme) | soft pastels on a warm dark base |
-| [`dracula.theme`](themes/dracula.theme) | neon purple, pink, and green |
-| [`gruvbox.theme`](themes/gruvbox.theme) | warm retro, aqua arc, ember needle |
-| [`nord.theme`](themes/nord.theme) | frosty, low-contrast arctic blues |
-| [`solarized-dark.theme`](themes/solarized-dark.theme) | muted teal and amber on deep sea |
-| [`tokyo-night.theme`](themes/tokyo-night.theme) | cool blues and violet |
+```sh
+mkdir -p ~/.config/termtaco
+cp themes/nord.theme ~/.config/termtaco/theme
+```
+
+`--theme` overrides the config file when both are given. An absent config
+file, or a line with an unknown field or an unparsable color, falls back to
+the default for that one field.
 
 ```sh
 mkdir -p ~/.config/termtaco

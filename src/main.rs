@@ -30,6 +30,10 @@ struct Args {
     max_decay: Option<Duration>,
     max_decay_target: f64,
     needle_inertia: Option<Duration>,
+    /// Raw content of the `--theme` preset, resolved and validated at parse
+    /// time. `None` falls back to `~/.config/termtaco/theme`, then the
+    /// built-in default.
+    theme_file: Option<String>,
 }
 
 // CLI defaults for the runtime knobs. The overflow-hold and max-decay-target
@@ -76,12 +80,20 @@ OPTIONS:
     --needle-inertia SECS
                          give the needle mass: it lags the reading and settles
                           over ~5x SECS (default: 0, the needle snaps)
+    --theme NAME         built-in color preset (default: bw)
+                           bw, color, catppuccin-mocha, dracula, gruvbox,
+                           nord, solarized-dark, tokyo-night
     -h, --help           print this help
 
 Reads one float per line from stdin; by default the first number on each line
 is used, so it sits downstream of output like `average rate: 33.746`. Pick a
 different --parser when the value isn't first, e.g. `ping <host> | termtaco
 --parser ping` for a live latency dial.
+
+--theme picks a built-in palette; for a fully custom one, write
+~/.config/termtaco/theme (one `field = color` line per dial element) — see
+themes/ in the repo for examples. --theme overrides that file when both are
+given.
 Quit with q, Esc, or Ctrl-C.";
 
 /// The value attached to a flag: the inline part of `--flag=value`, or the
@@ -110,6 +122,7 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
     let mut max_decay_secs: Option<f64> = None;
     let mut max_decay_target = display::speedometer::DEFAULT_MAX_DECAY_TARGET;
     let mut needle_inertia_secs = DEFAULT_NEEDLE_INERTIA_SECS;
+    let mut theme_file: Option<String> = None;
     let mut it = argv.into_iter();
 
     while let Some(raw) = it.next() {
@@ -167,6 +180,7 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
                 needle_inertia_secs =
                     parse_f64("--needle-inertia", flag_value(v, &mut it).as_deref(), 0.0, 60.0)?
             }
+            ("--theme", v) => theme_file = Some(parse_theme(flag_value(v, &mut it).as_deref())?),
             _ => {
                 eprintln!("unknown argument: {raw}\n\n{HELP}");
                 return Err(ExitCode::from(2));
@@ -195,6 +209,19 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         max_decay: max_decay_secs.map(Duration::from_secs_f64),
         max_decay_target,
         needle_inertia: (needle_inertia_secs > 0.0).then(|| Duration::from_secs_f64(needle_inertia_secs)),
+        theme_file,
+    })
+}
+
+/// Parse the `--theme` spec, or report a clear error listing the presets.
+fn parse_theme(v: Option<&str>) -> Result<String, ExitCode> {
+    let name = v.ok_or_else(|| {
+        eprintln!("--theme needs a name (one of: {})", display::speedometer::PRESET_NAMES);
+        ExitCode::from(2)
+    })?;
+    display::speedometer::preset_content(name).map(str::to_string).ok_or_else(|| {
+        eprintln!("unknown theme '{name}' (available: {})", display::speedometer::PRESET_NAMES);
+        ExitCode::from(2)
     })
 }
 
@@ -257,7 +284,8 @@ fn main() -> ExitCode {
         max_decay: args.max_decay,
         max_decay_target: args.max_decay_target,
         needle_inertia: args.needle_inertia,
-        theme_file: infra::config::theme_file(),
+        // --theme wins over ~/.config/termtaco/theme when both are given.
+        theme_file: args.theme_file.or_else(infra::config::theme_file),
     };
 
     let mut display = match display::make(&args.display, &display_cfg) {
@@ -322,6 +350,7 @@ mod tests {
         assert!(!a.kalman);
         assert_eq!(a.max_decay, None);
         assert_eq!(a.needle_inertia, None);
+        assert_eq!(a.theme_file, None);
     }
 
     #[test]
@@ -374,6 +403,22 @@ mod tests {
     #[test]
     fn parser_spec_rejects_garbage() {
         assert!(args(&["--parser", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn theme_preset_round_trips() {
+        let a = args(&["--theme", "nord"]).unwrap();
+        assert_eq!(a.theme_file.as_deref(), display::speedometer::preset_content("nord"));
+    }
+
+    #[test]
+    fn theme_preset_rejects_garbage() {
+        assert!(args(&["--theme", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn theme_without_a_value_returns_err_not_exit() {
+        assert!(args(&["--theme"]).is_err());
     }
 
     #[test]

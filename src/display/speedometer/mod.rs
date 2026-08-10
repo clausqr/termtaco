@@ -22,7 +22,7 @@ mod state;
 mod theme;
 
 pub use state::{DEFAULT_MAX_DECAY_TARGET, DEFAULT_OVERFLOW_HOLD};
-pub use theme::Theme;
+pub use theme::{preset_content, Theme, PRESET_NAMES};
 
 use std::time::{Duration, Instant};
 
