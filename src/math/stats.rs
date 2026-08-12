@@ -1,6 +1,6 @@
 //! Running statistics over a fixed-size window of `f64` samples.
 //!
-//! Pure and self-contained — knows nothing about rendering or I/O. The render
+//! Pure and self-contained: knows nothing about rendering or I/O. The render
 //! loop pushes values in and asks for a [`Stats`] snapshot each frame.
 
 use std::collections::VecDeque;
@@ -38,7 +38,7 @@ impl Window {
     /// Push a sample, evicting the oldest once the window is full.
     ///
     /// Non-finite samples (NaN, ±∞) are dropped so the snapshot can never leak
-    /// the min/max sentinels or poison the mean — keeping the invariant local
+    /// the min/max sentinels or poison the mean, keeping the invariant local
     /// to this module rather than relying on the caller to pre-filter.
     pub fn push(&mut self, v: f64) {
         if !v.is_finite() {
@@ -53,7 +53,7 @@ impl Window {
     /// Compute a fresh snapshot over the current contents.
     ///
     /// Two passes (mean, then variance) over the deque. At a window of 10000
-    /// and ~30 fps this is well under a million ops/sec — negligible.
+    /// and ~30 fps this is well under a million ops/sec: negligible.
     /// Returns `None` while the window is empty.
     pub fn stats(&self) -> Option<Stats> {
         let n = self.buf.len();

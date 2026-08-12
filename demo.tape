@@ -1,4 +1,4 @@
-# demo.tape — generates assets/demo.gif for the README.
+# demo.tape: generates assets/demo.gif for the README.
 #
 # Requires: vhs (github.com/charmbracelet/vhs), plus ttyd and ffmpeg.
 # Run a release build first so the build step below is a fast no-op, then:
@@ -25,7 +25,7 @@ Type "clear" Enter
 Sleep 500ms
 Show
 
-# Smooth sine sweep — best for watching the needle move.
+# Smooth sine sweep, best for watching the needle move.
 Type "./feed.sh sine | ./target/release/termtaco --title RATE --border-label termtaco" Enter
 Sleep 10s
 

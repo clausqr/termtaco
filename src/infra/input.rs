@@ -16,7 +16,7 @@ pub fn parse_first_float(line: &str) -> Option<f64> {
 }
 
 /// Find the next finite float in `line` at or after byte index `from`.
-/// Returns `(value, start, end)` — the token's byte range — so callers can
+/// Returns `(value, start, end)` (the token's byte range), so callers can
 /// resume scanning at `end` or require the token to start at a known position.
 fn scan_float(line: &str, from: usize) -> Option<(f64, usize, usize)> {
     let bytes = line.as_bytes();
@@ -70,7 +70,7 @@ fn scan_float(line: &str, from: usize) -> Option<(f64, usize, usize)> {
         match line[start..i].parse::<f64>() {
             Ok(v) if v.is_finite() => return Some((v, start, i)),
             // Parsed but non-finite (overflow, e.g. "1e400"). Skip the whole
-            // token — `i` is already at its end — rather than rescanning into
+            // token (`i` is already at its end) rather than rescanning into
             // it, which would mis-read the exponent digits as a fresh number.
             Ok(_) => continue,
             // Failed to parse (defensive). Resume just past the start.
@@ -189,7 +189,7 @@ fn parse_after_key(line: &str, key: &str) -> Option<f64> {
 
 /// RTT from a `ping` reply line: the number right after `time=` (or `time<`,
 /// which Windows prints for sub-millisecond replies). Summary lines like
-/// `... 0% packet loss, time 3005ms` don't match — no separator after `time`.
+/// `... 0% packet loss, time 3005ms` don't match: no separator after `time`.
 fn parse_ping(line: &str) -> Option<f64> {
     let bytes = line.as_bytes();
     let mut search = 0;
