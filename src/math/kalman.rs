@@ -1,7 +1,7 @@
 //! Constant-velocity Kalman filter for smoothing a noisy 1-D signal.
 //!
 //! State is `[position, velocity]`. [`Kalman::predict`] advances the estimate
-//! along its current velocity with no new data — the render loop calls this
+//! along its current velocity with no new data; the render loop calls this
 //! every frame so the needle moves smoothly between measurements instead of
 //! sitting frozen until the next one arrives. [`Kalman::update`] additionally
 //! corrects the estimate when a real measurement lands. Both take the
@@ -82,9 +82,23 @@ impl Kalman {
         self.pos
     }
 
+    /// Standard deviation of the position estimate: `sqrt(p00)`, the
+    /// diagonal of the covariance matrix that tracks position uncertainty.
+    /// Shrinks as consistent measurements arrive, grows on `predict` and
+    /// after a gap, so it doubles as a live "how much do I trust this
+    /// estimate" readout in the same units as the tracked value. `0.0`
+    /// before the first [`update`](Self::update) seeds the filter.
+    pub fn uncertainty(&self) -> f64 {
+        if self.seeded {
+            self.p00.sqrt()
+        } else {
+            0.0
+        }
+    }
+
     /// Predict-only state transition: constant-velocity motion (`F = [[1,
     /// dt], [0, 1]]`), plus a discretized white-noise-acceleration process
-    /// noise term scaled by the elapsed time — a longer gap since the last
+    /// noise term scaled by the elapsed time: a longer gap since the last
     /// advance (predict or update) allows more drift, so the filter readily
     /// jumps to a new measurement after a gap instead of clinging to a stale
     /// trajectory.
@@ -141,7 +155,7 @@ mod tests {
         approx(x1, 2.0);
 
         // No new measurement: predicting one second ahead extrapolates along
-        // the fitted velocity (1.0/s) — this is exactly what lets the needle
+        // the fitted velocity (1.0/s): this is exactly what lets the needle
         // keep moving between measurements.
         let predicted = k.predict(Duration::from_secs(1));
         approx(predicted, 3.0);
@@ -192,5 +206,36 @@ mod tests {
         let long_x1 = long.update(10.0, Duration::from_secs(30));
 
         assert!(long_x1 > short_x1, "a longer gap should trust the new sample more: {long_x1} vs {short_x1}");
+    }
+
+    #[test]
+    fn uncertainty_is_zero_before_seeding() {
+        let k = Kalman::new(0.001, 0.1);
+        assert_eq!(k.uncertainty(), 0.0);
+    }
+
+    #[test]
+    fn uncertainty_shrinks_as_consistent_measurements_arrive() {
+        let mut k = Kalman::new(0.001, 1.0);
+        k.update(5.0, TICK);
+        let after_first = k.uncertainty();
+        let mut last = after_first;
+        for _ in 0..20 {
+            k.update(5.0, TICK);
+            last = k.uncertainty();
+        }
+        assert!(last < after_first, "uncertainty should shrink as the estimate converges: {after_first} -> {last}");
+    }
+
+    #[test]
+    fn uncertainty_grows_across_a_predict_only_gap() {
+        let mut k = Kalman::new(0.5, 1.0);
+        k.update(0.0, Duration::ZERO);
+        for _ in 0..20 {
+            k.update(0.0, TICK);
+        }
+        let settled = k.uncertainty();
+        k.predict(Duration::from_secs(10));
+        assert!(k.uncertainty() > settled, "a long gap with no measurement should widen the uncertainty");
     }
 }
