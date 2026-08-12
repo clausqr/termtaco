@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
-# feed.sh — simple test feeder for termtaco.
+# feed.sh: simple test feeder for termtaco.
 #
 # Generates a stream of numbers on stdout for piping into termtaco, e.g.:
 #     ./feed.sh sine | cargo run --release
 #     ./feed.sh sine | ./target/release/termtaco --window 100
 #
 # Modes:
-#   sine    smooth oscillation around 50 (default) — best for watching the needle
-#   noisy   sine plus random jitter — exercises the ±1σ band
-#   ramp    slow climb then reset — sweeps the dial end to end
+#   sine    smooth oscillation around 50 (default), best for watching the needle
+#   noisy   sine plus random jitter, exercises the ±1σ band
+#   ramp    slow climb then reset, sweeps the dial end to end
 #   random  uniform noise in [0, 100)
+#   gauss   standard normal, mean 0 / std 1 (Box-Muller); exercises --0's
+#           floor-bounce (about half the samples are negative) and gives
+#           --kalman a signal with known, constant noise stats, see below
 #   rate    mimics the real producer: "average rate: <n>" lines (tests lenient parse)
-#   burst   emit for `on` seconds then go quiet for `off` seconds, looping —
+#   burst   emit for `on` seconds then go quiet for `off` seconds, looping;
 #           keeps stdin open while quiet, so the gauge goes STALE then recovers
+#
+# `gauss` against --kalman: the true per-sample noise variance is 1 (std=1),
+# so --kalman-r 1.0 matches it (the filter's own error model equals reality);
+# there's no real drift to track, so a small --kalman-q (default 0.001, or
+# lower) is right, letting the filter average the noise down instead of
+# chasing it. Try:
+#     ./feed.sh gauss | termtaco --title "N(0,1)" --0 --kalman \
+#         --kalman-q 0.001 --kalman-r 1.0 --needle-inertia 0.3
 #
 # Args:  ./feed.sh [mode] [delay_seconds] [on_seconds] [off_seconds]
 #        on/off apply to `burst` only (defaults: on=4, off=5; off > the gauge's
@@ -53,6 +64,16 @@ while true; do
         random)
             awk -v r="$RANDOM" 'BEGIN { printf "%.4f\n", r/32768*100 }'
             ;;
+        gauss)
+            # Box-Muller: two independent uniforms -> one standard normal.
+            # u1 is nudged off 0 so log() never sees an exact zero.
+            awk -v r1="$RANDOM" -v r2="$RANDOM" 'BEGIN {
+                u1 = (r1 + 1) / 32769;
+                u2 = r2 / 32768;
+                z = sqrt(-2 * log(u1)) * cos(2 * 3.14159265358979 * u2);
+                printf "%.4f\n", z;
+            }'
+            ;;
         rate)
             v=$(awk -v i="$i" 'BEGIN { printf "%.3f", 33 + 5*sin(i/20) }')
             printf 'average rate: %s\n' "$v"
@@ -66,7 +87,7 @@ while true; do
             fi
             ;;
         *)
-            echo "feed.sh: unknown mode '$mode' (sine|noisy|ramp|random|rate|burst)" >&2
+            echo "feed.sh: unknown mode '$mode' (sine|noisy|ramp|random|gauss|rate|burst)" >&2
             exit 2
             ;;
     esac
