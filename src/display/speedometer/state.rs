@@ -2,7 +2,7 @@
 //! decaying-max peak hold, and the needle-inertia pointer.
 //!
 //! Each exposes a `step(..., now: Instant)` that advances by exactly one
-//! frame — taking `now` explicitly (rather than reading
+//! frame: taking `now` explicitly (rather than reading
 //! `std::time::Instant::now()` internally) is what makes the timed
 //! transitions here unit-testable deterministically, the same way
 //! `math::kalman` and `math::needle` take `dt` explicitly rather than
@@ -37,25 +37,35 @@ impl ScaleState {
     /// Advance by one frame: `target` is the scale that would fit the
     /// current window, `value` is the value being checked against the
     /// displayed top, `hold` is the configured overflow-hold duration.
-    /// Returns the scale to draw this frame and whether it's currently in
-    /// overflow (capped, not yet rescaled).
+    /// `max_fixed` is set when the top of the scale is user-pinned
+    /// (`--max`): `target` never changes in that case, so there's nothing to
+    /// rescale to, and the overflow alarm stays lit for as long as the value
+    /// stays over the fixed top instead of clearing after `hold`. Returns
+    /// the scale to draw this frame and whether it's currently in overflow
+    /// (capped, not yet rescaled).
     pub(super) fn step(
         &mut self,
         target: (f64, f64, f64),
         value: f64,
         hold: Duration,
+        max_fixed: bool,
         now: Instant,
     ) -> ((f64, f64, f64), bool) {
         let (_, cur_hi, _) = *self.current.get_or_insert(target);
 
         let overflow = if value > cur_hi {
-            let since = *self.overflow_since.get_or_insert(now);
-            if now.duration_since(since) >= hold {
-                self.current = Some(target); // held long enough → rescale to fit
+            if max_fixed {
                 self.overflow_since = None;
-                false
+                true // permanently capped; there's no wider scale to rescale to
             } else {
-                true // still pinned at full scale
+                let since = *self.overflow_since.get_or_insert(now);
+                if now.duration_since(since) >= hold {
+                    self.current = Some(target); // held long enough → rescale to fit
+                    self.overflow_since = None;
+                    false
+                } else {
+                    true // still pinned at full scale
+                }
             }
         } else {
             // In range: track the target (handles shrinking / downward moves).
@@ -109,11 +119,15 @@ fn decay_toward(prev: f64, raw_max: f64, target: f64, dt: Duration, tau: Duratio
 }
 
 /// Physical needle dynamics: with `--needle-inertia` the needle is a damped
-/// mass chasing the reading instead of snapping to it.
+/// mass chasing the reading instead of snapping to it. With `--0`/`--zero`
+/// (`floor = Some(0.0)`), the needle also can't rest below zero, see
+/// [`Needle::with_floor`]. Without inertia there's no momentum to bounce
+/// with, so the floor is just a hard clamp on the (otherwise instant) target.
 #[derive(Default)]
 pub(super) struct NeedleState {
     pub(super) pointer: Option<Needle>,
     pub(super) last_tick: Option<Instant>,
+    pub(super) floor: Option<f64>,
 }
 
 impl NeedleState {
@@ -124,7 +138,10 @@ impl NeedleState {
                 self.last_tick = Some(now);
                 n.step(target, dt)
             }
-            None => target,
+            None => match self.floor {
+                Some(floor) => target.max(floor),
+                None => target,
+            },
         }
     }
 }
@@ -177,24 +194,24 @@ mod tests {
         let hold = Duration::from_secs(1);
         let t0 = Instant::now();
         // Establish an initial scale of (30, 45, 5).
-        let (scale0, overflow0) = s.step((30.0, 45.0, 5.0), 33.0, hold, t0);
+        let (scale0, overflow0) = s.step((30.0, 45.0, 5.0), 33.0, hold, false, t0);
         assert_eq!(scale0, (30.0, 45.0, 5.0));
         assert!(!overflow0);
 
-        // First overflowing frame arms the timer at t1 — `hold` is measured
+        // First overflowing frame arms the timer at t1: `hold` is measured
         // from here, not from t0.
         let t1 = t0 + Duration::from_millis(10);
-        let (scale1, overflow1) = s.step((60.0, 99.0, 10.0), 99.0, hold, t1);
+        let (scale1, overflow1) = s.step((60.0, 99.0, 10.0), 99.0, hold, false, t1);
         assert_eq!(scale1, (30.0, 45.0, 5.0), "scale should still be held");
         assert!(overflow1);
 
         // Just short of `hold` since the timer armed: still capped.
-        let (scale2, overflow2) = s.step((60.0, 99.0, 10.0), 99.0, hold, t1 + hold - Duration::from_millis(1));
+        let (scale2, overflow2) = s.step((60.0, 99.0, 10.0), 99.0, hold, false, t1 + hold - Duration::from_millis(1));
         assert_eq!(scale2, (30.0, 45.0, 5.0), "scale should still be held");
         assert!(overflow2);
 
         // Held long enough since the timer armed: rescales to fit.
-        let (scale3, overflow3) = s.step((60.0, 99.0, 10.0), 99.0, hold, t1 + hold);
+        let (scale3, overflow3) = s.step((60.0, 99.0, 10.0), 99.0, hold, false, t1 + hold);
         assert_eq!(scale3, (60.0, 99.0, 10.0));
         assert!(!overflow3);
     }
@@ -204,13 +221,13 @@ mod tests {
         let mut s = ScaleState::default();
         let hold = Duration::from_secs(1);
         let t0 = Instant::now();
-        s.step((30.0, 45.0, 5.0), 33.0, hold, t0);
-        let (_, overflow1) = s.step((30.0, 45.0, 5.0), 99.0, hold, t0 + Duration::from_millis(500));
+        s.step((30.0, 45.0, 5.0), 33.0, hold, false, t0);
+        let (_, overflow1) = s.step((30.0, 45.0, 5.0), 99.0, hold, false, t0 + Duration::from_millis(500));
         assert!(overflow1);
 
         // Back in range before the hold expires: clears immediately, and the
         // scale tracks the (possibly shrunk) target rather than staying held.
-        let (scale2, overflow2) = s.step((20.0, 40.0, 5.0), 33.0, hold, t0 + Duration::from_millis(600));
+        let (scale2, overflow2) = s.step((20.0, 40.0, 5.0), 33.0, hold, false, t0 + Duration::from_millis(600));
         assert!(!overflow2);
         assert_eq!(scale2, (20.0, 40.0, 5.0));
 
@@ -220,6 +237,7 @@ mod tests {
             (60.0, 99.0, 10.0),
             99.0,
             hold,
+            false,
             t0 + Duration::from_millis(600) + hold - Duration::from_millis(1),
         );
         assert!(overflow3, "timer should have restarted, not still be counting from the first overflow");
@@ -229,8 +247,8 @@ mod tests {
     fn overflow_hold_zero_rescales_on_the_first_overflowing_frame() {
         let mut s = ScaleState::default();
         let t0 = Instant::now();
-        s.step((30.0, 45.0, 5.0), 33.0, Duration::ZERO, t0);
-        let (scale, overflow) = s.step((60.0, 99.0, 10.0), 99.0, Duration::ZERO, t0);
+        s.step((30.0, 45.0, 5.0), 33.0, Duration::ZERO, false, t0);
+        let (scale, overflow) = s.step((60.0, 99.0, 10.0), 99.0, Duration::ZERO, false, t0);
         assert_eq!(scale, (60.0, 99.0, 10.0));
         assert!(!overflow, "zero hold should rescale immediately rather than ever showing capped");
     }
@@ -240,11 +258,42 @@ mod tests {
         let mut s = ScaleState::default();
         let hold = Duration::from_secs(1);
         let t0 = Instant::now();
-        s.step((30.0, 45.0, 5.0), 33.0, hold, t0);
+        s.step((30.0, 45.0, 5.0), 33.0, hold, false, t0);
         assert!(s.overflow_since.is_none());
         let t1 = t0 + Duration::from_millis(10);
-        s.step((30.0, 45.0, 5.0), 99.0, hold, t1);
+        s.step((30.0, 45.0, 5.0), 99.0, hold, false, t1);
         assert_eq!(s.overflow_since, Some(t1), "timer should start at the first overflowing frame, not before");
+    }
+
+    #[test]
+    fn max_fixed_never_auto_rescales_and_stays_lit() {
+        // With --max pinned, `target` never changes frame to frame; the LED
+        // should stay lit for as long as the value is over it, not clear
+        // after `hold` the way an auto-scaled overflow does.
+        let mut s = ScaleState::default();
+        let hold = Duration::from_millis(1);
+        let t0 = Instant::now();
+        let fixed = (0.0, 45.0, 5.0);
+        s.step(fixed, 33.0, hold, true, t0);
+
+        for i in 1..50 {
+            let t = t0 + hold * i * 2;
+            let (scale, overflow) = s.step(fixed, 99.0, hold, true, t);
+            assert_eq!(scale, fixed, "a fixed max never has anywhere else to rescale to");
+            assert!(overflow, "overflow should stay lit past `hold` when the max is fixed, at step {i}");
+        }
+    }
+
+    #[test]
+    fn max_fixed_clears_once_back_in_range() {
+        let mut s = ScaleState::default();
+        let hold = Duration::from_millis(1);
+        let t0 = Instant::now();
+        let fixed = (0.0, 45.0, 5.0);
+        s.step(fixed, 99.0, hold, true, t0);
+        let (scale, overflow) = s.step(fixed, 33.0, hold, true, t0 + Duration::from_secs(10));
+        assert_eq!(scale, fixed);
+        assert!(!overflow, "dropping back under the fixed max should clear the alarm immediately");
     }
 
     #[test]
@@ -300,10 +349,19 @@ mod tests {
 
     #[test]
     fn needle_state_lags_when_on() {
-        let mut n = NeedleState { pointer: Some(Needle::new(Duration::from_secs(1))), last_tick: None };
+        let mut n = NeedleState { pointer: Some(Needle::new(Duration::from_secs(1))), last_tick: None, floor: None };
         let t0 = Instant::now();
         assert_eq!(n.step(0.0, t0), 0.0); // seeds at the first target
         let moved = n.step(10.0, t0 + Duration::from_millis(100));
         assert!(moved > 0.0 && moved < 10.0, "should lag partway toward the new target, got {moved}");
+    }
+
+    #[test]
+    fn needle_state_floor_clamps_without_inertia() {
+        // No mass, so no momentum to bounce with: the floor is just a hard
+        // clamp on the (otherwise instantly-snapping) target.
+        let mut n = NeedleState { pointer: None, last_tick: None, floor: Some(0.0) };
+        assert_eq!(n.step(-5.0, Instant::now()), 0.0);
+        assert_eq!(n.step(5.0, Instant::now()), 5.0);
     }
 }

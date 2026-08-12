@@ -10,7 +10,7 @@
 //! All colors come from a [`Theme`], so the palette can be swapped in one
 //! place. Split across five sibling modules: [`geometry`] (pure angle/aspect
 //! math), [`scale`] (pure auto-scale selection), [`state`] (the two
-//! cross-frame timed state machines — overflow-hold and decaying-max — plus
+//! cross-frame timed state machines: overflow-hold and decaying-max, plus
 //! needle-inertia dispatch), [`theme`] (the color palette), and [`draw`] (the
 //! drawing routines). This file is just the `Speedometer` struct and its
 //! [`Display`] impl, wiring the pieces together each frame.
@@ -37,12 +37,24 @@ use crate::math::needle::Needle;
 
 pub struct Speedometer {
     theme: Theme,
+    /// How many `t` presses deep into the built-in preset cycle we are.
+    /// Starts at 0 without being tied to whichever preset (if any) `theme`
+    /// itself started from, so the first `t` press always lands on
+    /// [`theme::PRESETS`]'s first entry, `bw`.
+    theme_index: usize,
     /// Optional title shown at the top of the dial (set via `--title`).
     title: Option<String>,
     /// Text shown in the dial's border (set via `--border-label`).
     border_label: String,
     /// Always keep 0 in the scale (set via `--0`), e.g. for a speedometer.
     include_zero: bool,
+    /// Fixed lower bound for the scale (set via `--min`). `None` auto-scales
+    /// from the window, same as before this feature existed.
+    min: Option<f64>,
+    /// Fixed upper bound for the scale (set via `--max`). Unlike `min`, also
+    /// disables the overflow-hold-then-rescale dance: with nowhere wider to
+    /// rescale to, a value past a fixed max just stays capped and alarmed.
+    max: Option<f64>,
     /// How long to hold the capped/overflow state before rescaling.
     overflow_hold: Duration,
     /// Time constant for decaying the max tick toward `max_decay_target ×
@@ -66,17 +78,28 @@ impl Speedometer {
     pub fn new(cfg: &DisplayConfig) -> Self {
         Speedometer {
             theme: cfg.theme_file.as_deref().map(Theme::from_file).unwrap_or_default(),
+            theme_index: 0,
             title: cfg.title.clone().filter(|t| !t.is_empty()),
             border_label: cfg.border_label.clone(),
             include_zero: cfg.include_zero,
+            min: cfg.min,
+            max: cfg.max,
             overflow_hold: cfg.overflow_hold,
             max_decay: cfg.max_decay,
             max_decay_target: cfg.max_decay_target,
             scale: state::ScaleState::default(),
             decay: state::MaxDecay::default(),
             needle: state::NeedleState {
-                pointer: cfg.needle_inertia.map(Needle::new),
+                pointer: cfg.needle_inertia.map(|tau| {
+                    let n = Needle::new(tau);
+                    if cfg.include_zero {
+                        n.with_floor(0.0)
+                    } else {
+                        n
+                    }
+                }),
                 last_tick: None,
+                floor: cfg.include_zero.then_some(0.0),
             },
         }
     }
@@ -92,11 +115,16 @@ impl Display for Speedometer {
     fn render(&mut self, frame: &mut Frame, area: Rect, reading: &Reading) {
         self.render_at(frame, area, reading, Instant::now());
     }
+
+    fn cycle_theme(&mut self) {
+        self.theme_index += 1;
+        self.theme = theme::preset_theme_at(self.theme_index);
+    }
 }
 
 impl Speedometer {
     /// Same as [`Display::render`], but takes the current instant explicitly
-    /// rather than reading the clock itself — this is what lets the
+    /// rather than reading the clock itself: this is what lets the
     /// overflow-hold and max-decay timed transitions (both in [`state`]) be
     /// unit tested deterministically. The trait's `render` is a one-line
     /// call to this with `Instant::now()`.
@@ -107,11 +135,14 @@ impl Speedometer {
         let theme = self.theme;
         let title = self.title.clone();
         let border_label = self.border_label.clone();
+        let kalman_uncertainty = reading.kalman_uncertainty;
 
         // Target scale that would fit the current window; the held scale and
-        // the overflow-hold-then-rescale logic live in `ScaleState`.
-        let target = scale::nice_scale(&stats, self.include_zero);
-        let ((lo, hi, step), overflow) = self.scale.step(target, smoothed, self.overflow_hold, now);
+        // the overflow-hold-then-rescale logic live in `ScaleState`. A fixed
+        // `--max` disables the rescale side of that dance (see `ScaleState::step`).
+        let target = scale::nice_scale(&stats, self.include_zero, self.min, self.max);
+        let ((lo, hi, step), overflow) =
+            self.scale.step(target, smoothed, self.overflow_hold, self.max.is_some(), now);
         let (half_x, half_y) = geometry::aspect_bounds(area);
 
         // Max tick: held rigidly at the window's raw max by default, or
@@ -120,8 +151,8 @@ impl Speedometer {
         // fresh extreme.
         let display_max = self.decay.step(&stats, self.max_decay, self.max_decay_target, now);
 
-        // Needle position: the reading itself by default, or — with
-        // --needle-inertia — a critically-damped mass chasing that reading
+        // Needle position: the reading itself by default, or, with
+        // --needle-inertia, a critically-damped mass chasing that reading
         // (see `NeedleState`), so the pointer lags and settles like a real
         // gauge instead of teleporting. The raw tick and the value label are
         // unaffected; only the pointer has mass.
@@ -139,7 +170,7 @@ impl Speedometer {
         };
         let value_color = if overflow { theme.alarm } else { theme.value };
         // The raw tick is a liveness indicator like the needle (greys when
-        // stale), but doesn't join the overflow alarm — it just marks where
+        // stale), but doesn't join the overflow alarm; it just marks where
         // the last real sample landed, whether or not that's off-scale.
         let raw_color = if stale { theme.stats } else { theme.raw };
 
@@ -162,10 +193,17 @@ impl Speedometer {
                 draw::draw_scale_ticks(ctx, lo, hi, step, &theme);
                 draw::draw_tick_numbers(ctx, lo, hi, step, &theme);
                 draw::draw_markers(ctx, &theme);
+                if let Some(u) = kalman_uncertainty {
+                    draw::draw_covariance_band(ctx, smoothed, u, lo, hi, theme.uncertainty);
+                    draw::draw_kalman_center_tick(ctx, smoothed, lo, hi, needle_color);
+                }
                 draw::draw_stat_ticks(ctx, &stats, display_max, lo, hi, &theme);
                 draw::draw_raw_tick(ctx, stats.last, lo, hi, raw_color);
                 draw::draw_needle(ctx, needle_value, lo, hi, needle_color);
-                draw::draw_labels(ctx, smoothed, step, value_color);
+                draw::draw_labels(ctx, smoothed, step, kalman_uncertainty, value_color, theme.uncertainty);
+                if kalman_uncertainty.is_some() {
+                    draw::draw_last_measurement(ctx, stats.last, step, raw_color);
+                }
                 draw::draw_title(ctx, title.as_deref(), &theme);
                 draw::draw_led(ctx, overflow, &theme);
                 draw::draw_stale(ctx, stale, &theme);
@@ -184,15 +222,27 @@ mod tests {
         Stats { last, min, max, mean: (min + max) / 2.0, stddev: 1.0, count: 200 }
     }
 
-    /// A live reading whose smoothed value equals the raw sample — the common case.
+    /// A live reading whose smoothed value equals the raw sample: the common case.
     fn reading(last: f64, min: f64, max: f64) -> Reading {
-        Reading { stats: stats(last, min, max), smoothed: last, stale: false }
+        Reading { stats: stats(last, min, max), smoothed: last, stale: false, kalman_uncertainty: None }
     }
 
     /// Raw sample and smoothed value deliberately split, for the tests that pin
     /// which of the two each dial element tracks.
     fn reading_split(last: f64, smoothed: f64, min: f64, max: f64) -> Reading {
-        Reading { stats: stats(last, min, max), smoothed, stale: false }
+        Reading { stats: stats(last, min, max), smoothed, stale: false, kalman_uncertainty: None }
+    }
+
+    /// Same as [`reading_split`], but with Kalman-smoothing on (a position
+    /// uncertainty attached), for the tests covering the covariance band and
+    /// the `±` value-label suffix.
+    fn reading_kalman(last: f64, smoothed: f64, min: f64, max: f64, uncertainty: f64) -> Reading {
+        Reading {
+            stats: stats(last, min, max),
+            smoothed,
+            stale: false,
+            kalman_uncertainty: Some(uncertainty),
+        }
     }
 
     fn render_text(display: &mut Speedometer, r: &Reading) -> String {
@@ -272,6 +322,31 @@ mod tests {
     }
 
     #[test]
+    fn fixed_min_max_pin_the_scale_regardless_of_data() {
+        let mut display = Speedometer::new(&DisplayConfig { min: Some(0.0), max: Some(100.0), ..Default::default() });
+        let text = render_text(&mut display, &reading(33.0, 5.0, 250.0));
+        assert!(text.contains("100") && text.contains("0"), "tick numbers should reflect the fixed 0..100 scale");
+        assert!(!text.contains("250"), "the scale itself shouldn't stretch to fit an out-of-range value");
+    }
+
+    #[test]
+    fn fixed_max_overflow_never_auto_clears() {
+        let mut display = Speedometer::new(&DisplayConfig {
+            max: Some(45.0),
+            overflow_hold: Duration::from_millis(1),
+            ..Default::default()
+        });
+        let _ = render_text(&mut display, &reading(33.0, 30.0, 42.0));
+        // Even across many frames (well past any overflow-hold duration), a
+        // fixed max should stay capped rather than silently rescaling: there's
+        // nowhere else to rescale to.
+        for _ in 0..5 {
+            let text = render_text(&mut display, &reading(99.0, 30.0, 99.0));
+            assert!(text.contains("OVF"), "overflow LED should stay lit with a fixed max");
+        }
+    }
+
+    #[test]
     fn stale_shows_banner() {
         let mut display = Speedometer::default();
         let text = render_text(&mut display, &Reading { stale: true, ..reading(33.0, 30.0, 42.0) });
@@ -281,7 +356,7 @@ mod tests {
     #[test]
     fn raw_tick_tracks_the_raw_sample() {
         // Same smoothed value (so the needle/value label are identical), but a
-        // different raw last — the raw tick should still make the two frames
+        // different raw last: the raw tick should still make the two frames
         // differ.
         let mut display = Speedometer::default();
         let a = render_text(&mut display, &reading_split(31.0, 36.0, 30.0, 42.0));
@@ -320,6 +395,8 @@ mod tests {
             title: Some("RPM".to_string()),
             border_label: "engine".to_string(),
             include_zero: true,
+            min: Some(-10.0),
+            max: Some(200.0),
             overflow_hold: Duration::from_millis(250),
             max_decay: Some(Duration::from_secs(7)),
             max_decay_target: 3.5,
@@ -330,10 +407,13 @@ mod tests {
         assert_eq!(d.title.as_deref(), Some("RPM"));
         assert_eq!(d.border_label, "engine");
         assert!(d.include_zero);
+        assert_eq!(d.min, Some(-10.0));
+        assert_eq!(d.max, Some(200.0));
         assert_eq!(d.overflow_hold, Duration::from_millis(250));
         assert_eq!(d.max_decay, Some(Duration::from_secs(7)));
         assert_eq!(d.max_decay_target, 3.5);
         assert!(d.needle.pointer.is_some(), "needle inertia should arm the pointer");
+        assert_eq!(d.needle.floor, Some(0.0), "include_zero should arm the needle floor");
         assert_eq!(d.theme.arc, ratatui::style::Color::Cyan, "theme file's arc override should apply");
     }
 
@@ -345,8 +425,35 @@ mod tests {
     }
 
     #[test]
+    fn cycle_theme_advances_and_wraps() {
+        let mut d = Speedometer::default();
+        let start = d.theme.arc;
+        d.cycle_theme();
+        let first = d.theme.arc;
+        // A different preset should draw with a different arc color (all
+        // the built-in presets vary at least that field).
+        assert_ne!(start, first, "cycling once should change the theme");
+
+        // One full cycle (preset_count more presses) should land back on
+        // the same preset `first` landed on.
+        let preset_count = PRESET_NAMES.split(", ").count();
+        for _ in 0..preset_count {
+            d.cycle_theme();
+        }
+        assert_eq!(d.theme.arc, first, "cycling through every preset should land back on the first");
+    }
+
+    #[test]
+    fn include_zero_without_inertia_still_arms_the_floor() {
+        let cfg = DisplayConfig { include_zero: true, ..Default::default() };
+        let d = Speedometer::new(&cfg);
+        assert!(d.needle.pointer.is_none());
+        assert_eq!(d.needle.floor, Some(0.0));
+    }
+
+    #[test]
     fn empty_title_stays_none() {
-        // --title="" should draw no title, the same as omitting the flag — the
+        // --title="" should draw no title, the same as omitting the flag: the
         // normalization the deleted set_title used to do.
         let d = Speedometer::new(&DisplayConfig { title: Some(String::new()), ..Default::default() });
         assert!(d.title.is_none());
@@ -364,5 +471,45 @@ mod tests {
         assert_eq!(d.max_decay, None);
         assert_eq!(d.max_decay_target, DEFAULT_MAX_DECAY_TARGET);
         assert!(d.needle.pointer.is_none());
+        assert_eq!(d.needle.floor, None);
+    }
+
+    #[test]
+    fn kalman_shows_the_last_raw_measurement_below_the_value() {
+        let mut display = Speedometer::default();
+        let text = render_text(&mut display, &reading_kalman(41.0, 36.0, 30.0, 45.0, 1.2));
+        assert!(text.contains("36.00"), "smoothed value label missing");
+        assert!(text.contains("41.00"), "last raw measurement should be shown underneath");
+    }
+
+    #[test]
+    fn without_kalman_no_extra_measurement_line() {
+        let mut display = Speedometer::default();
+        let text = render_text(&mut display, &reading_split(41.0, 36.0, 30.0, 45.0));
+        assert!(!text.contains("41.00"), "raw measurement label should only show with --kalman");
+    }
+
+    #[test]
+    fn kalman_appends_uncertainty_to_the_value_label() {
+        let mut display = Speedometer::default();
+        let text = render_text(&mut display, &reading_kalman(41.0, 36.0, 30.0, 45.0, 1.2));
+        assert!(text.contains('±'), "value label should show the ± uncertainty with --kalman");
+        assert!(text.contains("1.20"), "the uncertainty figure itself should be printed");
+    }
+
+    #[test]
+    fn without_kalman_no_uncertainty_suffix() {
+        let mut display = Speedometer::default();
+        let text = render_text(&mut display, &reading_split(41.0, 36.0, 30.0, 45.0));
+        assert!(!text.contains('±'), "no ± suffix should print without --kalman");
+    }
+
+    #[test]
+    fn zero_uncertainty_draws_no_covariance_band_or_suffix() {
+        // A freshly-seeded filter (uncertainty 0.0) shouldn't draw a
+        // zero-width wedge or a misleading "± 0.00".
+        let mut display = Speedometer::default();
+        let text = render_text(&mut display, &reading_kalman(41.0, 36.0, 30.0, 45.0, 0.0));
+        assert!(!text.contains('±'), "a zero uncertainty shouldn't print a ± suffix");
     }
 }

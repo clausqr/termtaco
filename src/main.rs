@@ -1,4 +1,4 @@
-//! `termtaco` — a terminal tachometer; a tiny TUI speedometer for streaming values.
+//! `termtaco`: a terminal tachometer; a tiny TUI speedometer for streaming values.
 //!
 //! Reads one float per line from stdin (lenient: by default it extracts the
 //! first number it finds; `--parser` picks another strategy, e.g. `ping`),
@@ -21,6 +21,8 @@ struct Args {
     title: Option<String>,
     border_label: String,
     include_zero: bool,
+    min: Option<f64>,
+    max: Option<f64>,
     frame: Duration,
     stale_after: Duration,
     overflow_hold: Duration,
@@ -51,7 +53,7 @@ const DEFAULT_KALMAN_R: f64 = 0.1;
 const DEFAULT_NEEDLE_INERTIA_SECS: f64 = 0.0;
 
 const HELP: &str = "\
-termtaco — a terminal tachometer; a tiny TUI speedometer for streaming values
+termtaco: a terminal tachometer; a tiny TUI speedometer for streaming values
 
 USAGE:
     <producer> | termtaco [OPTIONS]
@@ -67,11 +69,20 @@ OPTIONS:
                            ping       RTT from ping output (the time= field)
     --title TEXT         title shown at the top of the dial
     --border-label TEXT  text in the dial's border (default: none)
-    --0, --zero          always keep 0 in the scale (e.g. a speedometer)
+    --0, --zero          always keep 0 in the scale (e.g. a speedometer); also
+                          keeps the needle from resting below 0 (a fast
+                          approach still bounces off it, but only briefly)
+    --min VALUE          fix the scale's lower bound instead of auto-scaling
+    --max VALUE          fix the scale's upper bound instead of auto-scaling;
+                          a value past it stays capped and alarmed instead of
+                          rescaling after --overflow-hold
     --fps N              refresh rate, frames per second (default: 30)
     --stale-after SECS   silence before the reading is flagged stale (default: 3)
     --overflow-hold SECS hold a capped reading this long before rescaling (default: 1)
-    --kalman             smooth the needle/value with a Kalman filter (stats stay raw)
+    --kalman             smooth the needle/value with a Kalman filter (stats stay raw);
+                          also shows the filter's ± uncertainty on the value label,
+                          a greyed-out band around the needle, and the last raw
+                          measurement underneath
     --kalman-q Q         Kalman process noise variance per second (default: 0.001)
     --kalman-r R         Kalman measurement noise variance (default: 0.1)
     --max-decay SECS     decay the max tick toward max-decay-target x mean once
@@ -96,6 +107,7 @@ different --parser when the value isn't first, e.g. `ping <host> | termtaco
 --print-theme NAME dumps a preset as a starting point, e.g.
 `termtaco --print-theme nord > ~/.config/termtaco/theme`. --theme overrides
 that file when both are given.
+Press t to cycle through the built-in presets live.
 Quit with q, Esc, or Ctrl-C.";
 
 /// The value attached to a flag: the inline part of `--flag=value`, or the
@@ -115,6 +127,8 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
     let mut title: Option<String> = None;
     let mut border_label = String::from(DEFAULT_BORDER_LABEL);
     let mut include_zero = false;
+    let mut min: Option<f64> = None;
+    let mut max: Option<f64> = None;
     let mut fps = DEFAULT_FPS;
     let mut stale_secs = DEFAULT_STALE_SECS;
     let mut overflow_secs = display::speedometer::DEFAULT_OVERFLOW_HOLD.as_secs_f64();
@@ -173,6 +187,8 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
                 })?;
             }
             ("--0", None) | ("--zero", None) => include_zero = true,
+            ("--min", v) => min = Some(parse_finite_f64("--min", flag_value(v, &mut it).as_deref())?),
+            ("--max", v) => max = Some(parse_finite_f64("--max", flag_value(v, &mut it).as_deref())?),
             ("--fps", v) => fps = parse_f64("--fps", flag_value(v, &mut it).as_deref(), 1.0, 240.0)?,
             ("--stale-after", v) => {
                 stale_secs = parse_f64("--stale-after", flag_value(v, &mut it).as_deref(), 0.1, 86_400.0)?
@@ -207,6 +223,13 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         return Err(ExitCode::from(2));
     }
 
+    if let (Some(lo), Some(hi)) = (min, max) {
+        if lo >= hi {
+            eprintln!("--min ({lo}) must be less than --max ({hi})");
+            return Err(ExitCode::from(2));
+        }
+    }
+
     Ok(Args {
         window,
         display,
@@ -214,6 +237,8 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         title,
         border_label,
         include_zero,
+        min,
+        max,
         frame: Duration::from_secs_f64(1.0 / fps),
         stale_after: Duration::from_secs_f64(stale_secs),
         overflow_hold: Duration::from_secs_f64(overflow_secs),
@@ -276,6 +301,19 @@ fn parse_f64(name: &str, v: Option<&str>, min: f64, max: f64) -> Result<f64, Exi
     }
 }
 
+/// Parse a finite `f64` flag with no range restriction (unlike [`parse_f64`]):
+/// `--min`/`--max` are scale bounds, so any finite value, including negative
+/// ones, is legitimate.
+fn parse_finite_f64(name: &str, v: Option<&str>) -> Result<f64, ExitCode> {
+    match v.and_then(|v| v.parse::<f64>().ok()) {
+        Some(n) if n.is_finite() => Ok(n),
+        _ => {
+            eprintln!("{name} needs a finite number");
+            Err(ExitCode::from(2))
+        }
+    }
+}
+
 /// Whether any active effect keeps changing between measurements (Kalman
 /// extrapolation, needle settling, max decay), and therefore needs the
 /// render loop to repaint every frame instead of only on new data.
@@ -294,6 +332,8 @@ fn main() -> ExitCode {
         // Cloned: LoopConfig below also needs border_label, for the pre-data placeholder.
         border_label: args.border_label.clone(),
         include_zero: args.include_zero,
+        min: args.min,
+        max: args.max,
         overflow_hold: args.overflow_hold,
         max_decay: args.max_decay,
         max_decay_target: args.max_decay_target,
@@ -361,6 +401,8 @@ mod tests {
         assert_eq!(a.title, None);
         assert_eq!(a.border_label, "");
         assert!(!a.include_zero);
+        assert_eq!(a.min, None);
+        assert_eq!(a.max, None);
         assert!(!a.kalman);
         assert_eq!(a.max_decay, None);
         assert_eq!(a.needle_inertia, None);
@@ -383,7 +425,7 @@ mod tests {
     #[test]
     fn valueless_flag_rejects_an_inline_value() {
         // --kalman takes no value, so --kalman=true isn't the flag matching
-        // with None — it falls through to the unknown-argument error.
+        // with None, it falls through to the unknown-argument error.
         assert!(args(&["--kalman=true"]).is_err());
     }
 
@@ -397,7 +439,7 @@ mod tests {
     fn title_without_a_value_returns_err_not_exit() {
         // Before this refactor, a missing --title value called
         // std::process::exit(2) directly, which would have killed the test
-        // process rather than returning an error — this test could not have
+        // process rather than returning an error; this test could not have
         // existed until that was fixed.
         assert!(args(&["--title"]).is_err());
     }
@@ -460,6 +502,32 @@ mod tests {
     }
 
     #[test]
+    fn min_and_max_parse_including_negative_values() {
+        let a = args(&["--min", "-10.5", "--max", "200"]).unwrap();
+        assert_eq!(a.min, Some(-10.5));
+        assert_eq!(a.max, Some(200.0));
+    }
+
+    #[test]
+    fn min_or_max_alone_is_fine() {
+        assert_eq!(args(&["--min", "5"]).unwrap().max, None);
+        assert_eq!(args(&["--max", "5"]).unwrap().min, None);
+    }
+
+    #[test]
+    fn min_must_be_less_than_max() {
+        assert!(args(&["--min", "10", "--max", "5"]).is_err());
+        assert!(args(&["--min", "10", "--max", "10"]).is_err(), "equal bounds should also be rejected");
+    }
+
+    #[test]
+    fn min_and_max_reject_non_finite() {
+        assert!(args(&["--min", "abc"]).is_err());
+        assert!(args(&["--max", "nan"]).is_err());
+        assert!(args(&["--max", "inf"]).is_err());
+    }
+
+    #[test]
     fn needs_animation_truth_table() {
         assert!(!needs_animation(false, None, None), "no active effect should not force animation");
         assert!(needs_animation(true, None, None), "kalman alone should animate");
@@ -469,7 +537,7 @@ mod tests {
         );
         assert!(
             needs_animation(false, None, Some(Duration::from_secs(1))),
-            "max decay alone should animate — this is the bug being fixed"
+            "max decay alone should animate: this is the bug being fixed"
         );
         assert!(needs_animation(true, Some(Duration::from_millis(1)), Some(Duration::from_secs(1))));
     }

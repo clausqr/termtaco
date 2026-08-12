@@ -1,7 +1,7 @@
 //! Sample ingestion, optional Kalman smoothing, and staleness bookkeeping.
 //!
 //! [`Feed`] owns everything the render loop needs to decide *what* to draw
-//! and *when* to repaint, and nothing that needs a terminal — so the
+//! and *when* to repaint, and nothing that needs a terminal, so the
 //! decision logic (should we repaint, is the Kalman filter allowed to
 //! extrapolate right now) is unit-testable against synthetic values and
 //! `Instant`s, without a real tty or a real clock. The public `drain`/`tick`
@@ -44,8 +44,8 @@ impl Feed {
     }
 
     /// Drain every pending sample, folding each through the Kalman filter
-    /// (if enabled). Returns whether anything changed — a sample landed, or
-    /// stdin just closed — which the caller should OR into its dirty flag.
+    /// (if enabled). Returns whether anything changed (a sample landed, or
+    /// stdin just closed), which the caller should OR into its dirty flag.
     pub fn drain(&mut self, rx: &Receiver<f64>) -> bool {
         self.drain_at(rx, Instant::now())
     }
@@ -83,7 +83,7 @@ impl Feed {
     }
 
     /// One pass with no new data: advance the filter's predict-only
-    /// extrapolation (skipped while stale — see the comment inside), apply
+    /// extrapolation (skipped while stale, see the comment inside), apply
     /// the animate repaint policy, and re-evaluate staleness. Returns
     /// whether a repaint is warranted, which the caller should OR into its
     /// dirty flag.
@@ -134,8 +134,8 @@ impl Feed {
         dirty
     }
 
-    /// The window's raw statistics paired with the smoothed reading — the Kalman
-    /// estimate, or `stats.last` when smoothing is disabled — or `None` while no
+    /// The window's raw statistics paired with the smoothed reading (the Kalman
+    /// estimate, or `stats.last` when smoothing is disabled), or `None` while no
     /// sample has landed yet.
     ///
     /// Returned alongside rather than folded into `Stats`: the smoothing is this
@@ -144,6 +144,14 @@ impl Feed {
         let stats = self.window.stats()?;
         let smoothed = self.last_smoothed.unwrap_or(stats.last);
         Some((stats, smoothed))
+    }
+
+    /// The Kalman filter's current position uncertainty (a standard
+    /// deviation, in the same units as the tracked value), or `None` when
+    /// `--kalman` is off. Read alongside [`snapshot`](Self::snapshot) so a
+    /// renderer can show the estimate together with how much to trust it.
+    pub fn kalman_uncertainty(&self) -> Option<f64> {
+        self.kalman.as_ref().map(Kalman::uncertainty)
     }
 
     pub fn stale(&self) -> bool {
@@ -210,6 +218,25 @@ mod tests {
     }
 
     #[test]
+    fn kalman_uncertainty_is_none_when_disabled() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(5.0).unwrap();
+        let mut f = feed(false);
+        f.drain_at(&rx, Instant::now());
+        assert_eq!(f.kalman_uncertainty(), None);
+    }
+
+    #[test]
+    fn kalman_uncertainty_is_some_when_enabled() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(5.0).unwrap();
+        let mut f = feed(true);
+        assert_eq!(f.kalman_uncertainty(), Some(0.0), "unseeded filter reports zero uncertainty, not none");
+        f.drain_at(&rx, Instant::now());
+        assert!(f.kalman_uncertainty().unwrap() > 0.0, "a seeded filter should report a real uncertainty");
+    }
+
+    #[test]
     fn snapshot_smoothed_diverges_with_kalman() {
         let (tx, rx) = mpsc::channel();
         let mut f = feed(true);
@@ -234,7 +261,7 @@ mod tests {
         f.drain_at(&rx, t0 + Duration::from_millis(100)); // establishes a velocity estimate
 
         // Advance in small (frame-sized) steps up to and past stale_after
-        // (3s), the way the real render loop calls tick() every frame — so
+        // (3s), the way the real render loop calls tick() every frame, so
         // staleness is detected promptly rather than in one large jump.
         let step = Duration::from_millis(16);
         let mut t = t0 + Duration::from_millis(100);
@@ -244,7 +271,7 @@ mod tests {
         }
         let frozen = f.snapshot().unwrap().1;
 
-        // Many more ticks pass while stale — without the staleness gate the
+        // Many more ticks pass while stale; without the staleness gate the
         // estimate would keep drifting along the fitted velocity forever.
         for _ in 0..50 {
             t += step;
@@ -261,7 +288,7 @@ mod tests {
     fn stale_gap_lands_wholly_in_the_next_measurement_dt() {
         // After a stale gap, kalman_last stays frozen (tick_at skips the
         // predict-and-advance step while stale), so the next real sample
-        // sees the *entire* gap as its dt — which is what makes the filter
+        // sees the *entire* gap as its dt, which is what makes the filter
         // trust it almost completely rather than dragging in a stale
         // trajectory (covered at the Kalman level by
         // `longer_gap_trusts_the_new_measurement_more`; this test pins that
@@ -333,7 +360,7 @@ mod tests {
     fn animate_marks_dirty_only_after_the_first_sample() {
         let mut f = feed(false);
         let t0 = Instant::now();
-        assert!(!f.tick_at(true, t0), "no data yet — animate shouldn't force a repaint");
+        assert!(!f.tick_at(true, t0), "no data yet, animate shouldn't force a repaint");
 
         let (tx, rx) = mpsc::channel();
         tx.send(1.0).unwrap();

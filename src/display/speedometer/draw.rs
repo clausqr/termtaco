@@ -1,5 +1,5 @@
 //! Drawing routines: turns already-resolved geometry (angles, radii, colors)
-//! into canvas primitives. No state, no decision logic — everything it needs
+//! into canvas primitives. No state, no decision logic; everything it needs
 //! is passed in.
 
 use ratatui::{
@@ -23,7 +23,7 @@ const MAJOR_TICK_R: f64 = R_ARC - 0.11;
 const MINOR_TICK_R: f64 = R_ARC - 0.06;
 
 /// How many graduation ticks make up one major interval (i.e. every
-/// `MINORS_PER_MAJOR`-th tick is major) — one constant sizes the minor tick
+/// `MINORS_PER_MAJOR`-th tick is major): one constant sizes the minor tick
 /// spacing *and* picks which ticks are major, so the two can't drift apart.
 const MINORS_PER_MAJOR: i64 = 5;
 
@@ -31,13 +31,13 @@ const MINORS_PER_MAJOR: i64 = 5;
 /// outside the arc rim.
 const MARKER_IN: f64 = R_ARC + 0.02;
 const MARKER_OUT: f64 = R_ARC + 0.09;
-/// The markers sit at min, quarter, mid, three-quarter, and full scale —
+/// The markers sit at min, quarter, mid, three-quarter, and full scale:
 /// `MARKER_COUNT` intervals between the five of them.
 const MARKER_COUNT: usize = 4;
 
 /// Radial spans for the three stat-tick tiers (see [`draw_stat_ticks`]), each
 /// longer than the last so min/max < band < mean read at a glance even in a
-/// single color. `TICK_BAND_IN` numerically coincides with `MAJOR_TICK_R` —
+/// single color. `TICK_BAND_IN` numerically coincides with `MAJOR_TICK_R`:
 /// unrelated ticks that happen to share a length; kept as separate named
 /// constants rather than aliased, since there's no reason a future change to
 /// one should move the other.
@@ -52,12 +52,16 @@ const TICK_MEAN_OUT: f64 = R_ARC + 0.07;
 const NEEDLE_TIP_R: f64 = R_ARC - 0.05;
 
 /// Half a character's width in dial units, used to roughly center printed
-/// text (tick numbers, the title) on its anchor point — `ctx.print` anchors
+/// text (tick numbers, the title) on its anchor point: `ctx.print` anchors
 /// at the text's left edge, not its center.
 const HALF_CHAR_W: f64 = 0.03;
 
 /// Screen position of the big value label under the hub.
 const VALUE_POS: (f64, f64) = (-0.18, -0.32);
+
+/// Screen position of the small last-measurement label, directly under the
+/// big value label (see `draw_last_measurement`).
+const LAST_MEASUREMENT_POS: (f64, f64) = (-0.18, -0.40);
 
 /// Vertical position of the optional title, across the top of the dial face.
 const TITLE_Y: f64 = 0.42;
@@ -140,8 +144,8 @@ pub(super) fn draw_stale(ctx: &mut Context, stale: bool, theme: &Theme) {
     }
 }
 
-/// Five fixed reference markers at the quarter points of the scale — min (0),
-/// quarter, mid, three-quarter, and full (max) — drawn just outside the arc
+/// Five fixed reference markers at the quarter points of the scale (min (0),
+/// quarter, mid, three-quarter, and full (max)), drawn just outside the arc
 /// rim so they read regardless of the value graduations inside.
 pub(super) fn draw_markers(ctx: &mut Context, theme: &Theme) {
     for i in 0..=MARKER_COUNT {
@@ -176,6 +180,43 @@ pub(super) fn draw_tick_numbers(ctx: &mut Context, lo: f64, hi: f64, step: f64, 
     }
 }
 
+/// Radial span of the Kalman-uncertainty corona: a thin ring just outside the
+/// arc rim, past the reference markers and stat ticks, rather than a wedge
+/// filled in behind the needle.
+const COVARIANCE_BAND_IN: f64 = R_ARC + 0.05;
+const COVARIANCE_BAND_OUT: f64 = R_ARC + 0.15;
+
+/// How many radial spokes make up the uncertainty corona: dense enough that
+/// adjacent spokes' Braille dots touch and it reads as a shaded arc segment
+/// rather than a row of individual hairlines.
+const COVARIANCE_BAND_SPOKES: usize = 32;
+
+/// Greyed-out corona segment just outside the rim, spanning `center ±
+/// half_width` (the Kalman filter's current position estimate and its
+/// uncertainty), drawn only with `--kalman`. Literally marks where the true
+/// value probably is, distinct from the min/max/mean/±1σ *data* ticks
+/// further in: this is the filter's own confidence in `center`, not the
+/// window's spread.
+pub(super) fn draw_covariance_band(ctx: &mut Context, center: f64, half_width: f64, lo: f64, hi: f64, color: Color) {
+    if half_width <= 0.0 {
+        return;
+    }
+    for i in 0..=COVARIANCE_BAND_SPOKES {
+        let t = i as f64 / COVARIANCE_BAND_SPOKES as f64;
+        let v = (center - half_width + t * 2.0 * half_width).clamp(lo, hi);
+        draw_radial(ctx, value_to_angle(v, lo, hi), COVARIANCE_BAND_IN, COVARIANCE_BAND_OUT, 0.0, color);
+    }
+}
+
+/// A tick through the covariance corona at exactly `center` (the Kalman
+/// estimate the band is centered on). Distinct from the needle: with
+/// `--needle-inertia` the needle lags behind this, so the two visibly
+/// diverge, the same way the raw tick already diverges from both under
+/// smoothing.
+pub(super) fn draw_kalman_center_tick(ctx: &mut Context, center: f64, lo: f64, hi: f64, color: Color) {
+    draw_tick(ctx, center, lo, hi, COVARIANCE_BAND_IN, COVARIANCE_BAND_OUT, color);
+}
+
 /// Draw the needle from the hub to just inside the arc, in `color` (white
 /// normally, alarm red on overflow).
 pub(super) fn draw_needle(ctx: &mut Context, v: f64, lo: f64, hi: f64, color: Color) {
@@ -191,7 +232,7 @@ pub(super) fn draw_needle(ctx: &mut Context, v: f64, lo: f64, hi: f64, color: Co
 
 /// A radial line at angle `theta`, spanning `r_inner..r_outer`, offset `off`
 /// canvas units perpendicular to the radius (`0.0` = centered on the radial
-/// line). The offset is what lets a tick be drawn several dots wide — see
+/// line). The offset is what lets a tick be drawn several dots wide, see
 /// [`draw_raw_tick`]. Bounds are isotropic in canvas units (see
 /// [`super::geometry::aspect_bounds`]), so a fixed offset gives a
 /// constant-width bar at any radius or pane size.
@@ -213,12 +254,12 @@ fn draw_tick(ctx: &mut Context, value: f64, lo: f64, hi: f64, r_inner: f64, r_ou
     draw_radial(ctx, value_to_angle(value, lo, hi), r_inner, r_outer, 0.0, color);
 }
 
-/// The latest raw, unfiltered sample: the boldest mark on the rim — the
+/// The latest raw, unfiltered sample: the boldest mark on the rim, the
 /// longest radial span, pushed furthest past the arc, and drawn as several
 /// parallel lines so it reads as a thick bar rather than a hairline. Where
 /// the needle shows the filtered/inertial reading, this is where the last
 /// real measurement actually landed, so the two visibly diverge under
-/// smoothing (`--kalman`, `--needle-inertia`) — and coincide (reading as a
+/// smoothing (`--kalman`, `--needle-inertia`), and coincide (reading as a
 /// fatter needle tip) when neither is enabled.
 pub(super) fn draw_raw_tick(ctx: &mut Context, value: f64, lo: f64, hi: f64, color: Color) {
     const R_IN: f64 = R_ARC - 0.13;
@@ -231,7 +272,7 @@ pub(super) fn draw_raw_tick(ctx: &mut Context, value: f64, lo: f64, hi: f64, col
     }
 }
 
-/// Min/max, mean, and the ±1σ band — drawn on top of the graduation ticks.
+/// Min/max, mean, and the ±1σ band, drawn on top of the graduation ticks.
 /// `display_max` is `s.max` unless a decaying max (`--max-decay`) has pulled
 /// it below the raw window max.
 pub(super) fn draw_stat_ticks(ctx: &mut Context, s: &Stats, display_max: f64, lo: f64, hi: f64, theme: &Theme) {
@@ -260,8 +301,39 @@ pub(super) fn draw_stat_ticks(ctx: &mut Context, s: &Stats, display_max: f64, lo
 /// `0.00`; floored at 2 decimals so a coarse-step dial (e.g. step = 5) still
 /// shows the reading's actual fractional detail instead of a rounded whole
 /// number.
-pub(super) fn draw_labels(ctx: &mut Context, value: f64, step: f64, value_color: Color) {
+/// `uncertainty` appends "± N" in a dimmer color when Kalman-smoothing is on
+/// and has something to show (`Some` and > 0; a freshly-seeded filter with
+/// no uncertainty estimate yet stays silent rather than print a misleading
+/// "± 0.00"), from [`crate::math::kalman::Kalman::uncertainty`]: the
+/// filter's own confidence in `value`, printed right on the reading it
+/// qualifies.
+pub(super) fn draw_labels(
+    ctx: &mut Context,
+    value: f64,
+    step: f64,
+    uncertainty: Option<f64>,
+    value_color: Color,
+    uncertainty_color: Color,
+) {
     let dec = decimals_for(step).max(2);
     let (x, y) = VALUE_POS;
     ctx.print(x, y, Span::styled(format!("{value:.dec$}"), Style::default().fg(value_color)));
+    if let Some(u) = uncertainty.filter(|u| *u > 0.0) {
+        let value_text = format!("{value:.dec$}");
+        ctx.print(
+            x + HALF_CHAR_W * 2.0 * value_text.len() as f64,
+            y,
+            Span::styled(format!("± {u:.dec$}"), Style::default().fg(uncertainty_color)),
+        );
+    }
+}
+
+/// The last raw measurement, printed under the big value label, only drawn
+/// with `--kalman`, where the value label shows the filtered estimate and
+/// this shows what the filter actually saw last, so both track the same
+/// spot the bold raw tick marks on the arc (see `draw_raw_tick`).
+pub(super) fn draw_last_measurement(ctx: &mut Context, value: f64, step: f64, color: Color) {
+    let dec = decimals_for(step).max(2);
+    let (x, y) = LAST_MEASUREMENT_POS;
+    ctx.print(x, y, Span::styled(format!("{value:.dec$}"), Style::default().fg(color)));
 }

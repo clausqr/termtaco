@@ -49,7 +49,7 @@ pub struct LoopConfig {
 /// Run the loop until the user quits or stdin closes and they quit.
 ///
 /// `display` is any renderer; the loop never inspects it beyond `render`.
-/// Ingestion, filtering, and staleness bookkeeping live in [`Feed`] — this
+/// Ingestion, filtering, and staleness bookkeeping live in [`Feed`]: this
 /// function is orchestration: drive `Feed` each pass, repaint when it says
 /// to, and handle terminal I/O (which `Feed` deliberately knows nothing
 /// about, so its decision logic stays testable without a real tty).
@@ -65,7 +65,7 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
 
     loop {
         // `|=`, not `if`: both must run every pass regardless of the other's
-        // result — draining is independent of whether the filter/staleness
+        // result; draining is independent of whether the filter/staleness
         // state also wants a repaint this pass.
         dirty |= feed.drain(&rx);
         dirty |= feed.tick(cfg.animate);
@@ -74,7 +74,12 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
         if dirty && last_draw.elapsed() >= cfg.frame {
             match feed.snapshot() {
                 Some((stats, smoothed)) => {
-                    let reading = Reading { stats, smoothed, stale: feed.stale() };
+                    let reading = Reading {
+                        stats,
+                        smoothed,
+                        stale: feed.stale(),
+                        kalman_uncertainty: feed.kalman_uncertainty(),
+                    };
                     term.draw(|f| display.render(f, f.size(), &reading))?;
                 }
                 None => {
@@ -87,7 +92,7 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
         }
 
         // Wait for a key (or the next frame deadline) on the controlling
-        // tty — stdin is busy carrying data, so events come from the tty.
+        // tty: stdin is busy carrying data, so events come from the tty.
         let wait = cfg.frame.saturating_sub(last_draw.elapsed()).max(MIN_POLL_WAIT);
         if event::poll(wait)? {
             match event::read()? {
@@ -98,6 +103,10 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
                         (KeyCode::Char('q'), _) => break,
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
                         (KeyCode::Esc, _) => break,
+                        (KeyCode::Char('t'), _) => {
+                            display.cycle_theme();
+                            dirty = true;
+                        }
                         _ => {}
                     }
                 }
@@ -112,7 +121,7 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
 /// The pre-data / stdin-closed placeholder screen.
 fn draw_placeholder(f: &mut Frame, border_label: &str, stdin_closed: bool) {
     let msg = if stdin_closed {
-        "stdin closed with no data — press q to quit"
+        "stdin closed with no data, press q to quit"
     } else {
         "waiting for data on stdin…"
     };

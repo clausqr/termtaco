@@ -13,7 +13,7 @@ pub mod speedometer;
 /// infra/display boundary (`infra::app::run`) from a [`crate::infra::feed::Feed`]
 /// snapshot and handed to [`Display::render`] as one argument.
 ///
-/// `Copy` and small, so passing it per frame costs nothing — and keeping
+/// `Copy` and small, so passing it per frame costs nothing, and keeping
 /// `smoothed`/`stale` here rather than as fields on `Stats` or as `&mut self`
 /// setters is what lets [`crate::math::stats::Window`] stay honestly pure.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,6 +27,11 @@ pub struct Reading {
     pub smoothed: f64,
     /// The feed has gone quiet: the reading is frozen, not live.
     pub stale: bool,
+    /// The Kalman filter's current position uncertainty (a standard
+    /// deviation, in the units of the tracked value), or `None` when
+    /// `--kalman` is off. A renderer can use its presence as the "are we
+    /// smoothing" signal instead of a separate config flag.
+    pub kalman_uncertainty: Option<f64>,
 }
 
 /// A renderer for a stats snapshot. Takes `&mut self` so a renderer can carry
@@ -34,6 +39,11 @@ pub struct Reading {
 pub trait Display {
     /// Draw the current reading into `area` of `frame`.
     fn render(&mut self, frame: &mut Frame, area: Rect, reading: &Reading);
+
+    /// Cycle to the next built-in color theme, wired to the `t` key in the
+    /// render loop. Default no-op, so a renderer with no theme concept
+    /// doesn't need to implement it.
+    fn cycle_theme(&mut self) {}
 }
 
 /// Construction-time configuration for a renderer, assembled once from the CLI
@@ -45,7 +55,7 @@ pub trait Display {
 /// [`Display`] trait, so adding a knob for one renderer doesn't grow the API
 /// surface every other renderer has to inherit and no-op.
 ///
-/// Per-frame data (the current reading, staleness) does not belong here — it
+/// Per-frame data (the current reading, staleness) does not belong here; it
 /// travels through [`Display::render`].
 pub struct DisplayConfig {
     /// Title drawn on the display face. Empty is treated as absent.
@@ -54,6 +64,12 @@ pub struct DisplayConfig {
     pub border_label: String,
     /// Always keep 0 in the scale, even if the data never reaches it.
     pub include_zero: bool,
+    /// Fixed lower bound for the scale. `None` auto-scales from the window.
+    pub min: Option<f64>,
+    /// Fixed upper bound for the scale. `None` auto-scales from the window;
+    /// unlike `min`, also disables the overflow-hold-then-rescale dance,
+    /// since a fixed max has nowhere else to rescale to.
+    pub max: Option<f64>,
     /// How long to hold a capped/overflow reading before rescaling to fit.
     pub overflow_hold: std::time::Duration,
     /// Time constant over which the displayed max decays toward
@@ -64,7 +80,7 @@ pub struct DisplayConfig {
     /// Time constant for a needle with mass. `None` snaps immediately.
     pub needle_inertia: Option<std::time::Duration>,
     /// Raw content of the theme file (see [`crate::infra::config`]), e.g.
-    /// `"needle = yellow\narc = cyan\n"`. `None` when the file doesn't exist —
+    /// `"needle = yellow\narc = cyan\n"`. `None` when the file doesn't exist;
     /// each renderer falls back to its own default theme.
     pub theme_file: Option<String>,
 }
@@ -77,6 +93,8 @@ impl Default for DisplayConfig {
             title: None,
             border_label: String::new(),
             include_zero: false,
+            min: None,
+            max: None,
             overflow_hold: speedometer::DEFAULT_OVERFLOW_HOLD,
             max_decay: None,
             max_decay_target: speedometer::DEFAULT_MAX_DECAY_TARGET,

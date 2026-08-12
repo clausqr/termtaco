@@ -3,12 +3,12 @@
 
 use crate::math::stats::Stats;
 
-/// Target number of major graduation intervals across the scale's span —
+/// Target number of major graduation intervals across the scale's span:
 /// `nice_scale` sizes its step so the range divides into roughly this many.
 const TARGET_MAJOR_INTERVALS: f64 = 4.0;
 
 /// Relative tolerance for treating a window's max and min as equal (an
-/// effectively-constant window), rather than a fixed absolute gap — an
+/// effectively-constant window), rather than a fixed absolute gap: an
 /// absolute threshold would misclassify genuine variation at very small data
 /// magnitudes (e.g. sub-nanosecond timings) as constant.
 const DEGENERATE_SPAN_EPS: f64 = 1e-9;
@@ -53,13 +53,21 @@ pub(super) fn decimals_for(step: f64) -> usize {
 /// With `include_zero`, the origin is folded into the range first (so the gauge
 /// always shows 0, like a speedometer) and the step is sized for the extended
 /// range. Zero stays on the tick grid since it is a multiple of any step.
-pub(super) fn nice_scale(s: &Stats, include_zero: bool) -> (f64, f64, f64) {
+///
+/// `min`/`max` (`--min`/`--max`) pin either end of the scale outright: a
+/// fixed bound wins over both the data and `include_zero`, is used exactly
+/// as given (not snapped to the step grid), and feeds into the step sizing
+/// the same way a folded-in zero does, so tick spacing accounts for it
+/// rather than reacting to the live data on that side.
+pub(super) fn nice_scale(s: &Stats, include_zero: bool, min: Option<f64>, max: Option<f64>) -> (f64, f64, f64) {
     let mut dmin = s.min;
     let mut dmax = s.max;
     if include_zero {
         dmin = dmin.min(0.0);
         dmax = dmax.max(0.0);
     }
+    let dmin = min.unwrap_or(dmin);
+    let dmax = max.unwrap_or(dmax);
     let scale_ref = dmax.abs().max(dmin.abs()).max(1.0);
     let raw_span = if (dmax - dmin).abs() <= DEGENERATE_SPAN_EPS * scale_ref {
         dmax.abs().max(1.0) // constant data: scale from the value's magnitude
@@ -73,6 +81,8 @@ pub(super) fn nice_scale(s: &Stats, include_zero: bool) -> (f64, f64, f64) {
         lo -= step;
         hi += step;
     }
+    let lo = min.unwrap_or(lo);
+    let hi = max.unwrap_or(hi);
     (lo, hi, step)
 }
 
@@ -91,18 +101,18 @@ mod tests {
     #[test]
     fn nice_scale_rounds_to_fives_at_magnitude() {
         // 18 → 20 at the units scale.
-        let (lo, hi, step) = nice_scale(&stats(12.0, 6.0, 18.0), false);
+        let (lo, hi, step) = nice_scale(&stats(12.0, 6.0, 18.0), false, None, None);
         approx(lo, 5.0);
         approx(hi, 20.0);
         approx(step, 5.0);
 
         // 49995 → 50000 at the ten-thousands scale.
-        let (_, hi2, step2) = nice_scale(&stats(40000.0, 10000.0, 49995.0), false);
+        let (_, hi2, step2) = nice_scale(&stats(40000.0, 10000.0, 49995.0), false, None, None);
         approx(hi2, 50000.0);
         approx(step2, 10000.0);
 
         // 0.0023 → 0.0025 at the ten-thousandths scale.
-        let (_, hi3, step3) = nice_scale(&stats(0.0015, 0.0005, 0.0023), false);
+        let (_, hi3, step3) = nice_scale(&stats(0.0015, 0.0005, 0.0023), false, None, None);
         approx(hi3, 0.0025);
         approx(step3, 0.0005);
     }
@@ -110,10 +120,10 @@ mod tests {
     #[test]
     fn include_zero_anchors_scale_at_origin() {
         // Without it, data 30..42 scales to 30..45.
-        let (lo, _, _) = nice_scale(&stats(33.0, 30.0, 42.0), false);
+        let (lo, _, _) = nice_scale(&stats(33.0, 30.0, 42.0), false, None, None);
         approx(lo, 30.0);
         // With --0, the origin is folded in and the step sizes for 0..42.
-        let (lo0, hi0, step0) = nice_scale(&stats(33.0, 30.0, 42.0), true);
+        let (lo0, hi0, step0) = nice_scale(&stats(33.0, 30.0, 42.0), true, None, None);
         approx(lo0, 0.0);
         approx(hi0, 50.0);
         approx(step0, 10.0);
@@ -129,7 +139,38 @@ mod tests {
 
     #[test]
     fn degenerate_window_gets_a_band() {
-        let (lo, hi, _) = nice_scale(&stats(4.0, 4.0, 4.0), false);
+        let (lo, hi, _) = nice_scale(&stats(4.0, 4.0, 4.0), false, None, None);
         assert!(lo < 4.0 && hi > 4.0, "band should bracket the value");
+    }
+
+    #[test]
+    fn fixed_min_wins_over_data_and_is_used_verbatim() {
+        // Data alone would floor to 30 (see nice_scale_rounds_to_fives_at_magnitude);
+        // a fixed --min of 7.3 isn't on the step grid but is kept exactly.
+        let (lo, _, _) = nice_scale(&stats(33.0, 30.0, 42.0), false, Some(7.3), None);
+        approx(lo, 7.3);
+    }
+
+    #[test]
+    fn fixed_max_wins_over_data_and_is_used_verbatim() {
+        let (_, hi, _) = nice_scale(&stats(33.0, 30.0, 42.0), false, None, Some(87.5));
+        approx(hi, 87.5);
+    }
+
+    #[test]
+    fn fixed_bounds_ignore_data_outside_them() {
+        // A spike past the fixed max shouldn't widen the displayed scale;
+        // ScaleState's overflow handling is what marks it capped instead.
+        let (lo, hi, _) = nice_scale(&stats(200.0, -5.0, 200.0), false, Some(0.0), Some(100.0));
+        approx(lo, 0.0);
+        approx(hi, 100.0);
+    }
+
+    #[test]
+    fn fixed_bounds_size_the_step_to_their_own_span() {
+        let (lo, hi, step) = nice_scale(&stats(5.0, 0.0, 10.0), false, Some(0.0), Some(100.0));
+        approx(lo, 0.0);
+        approx(hi, 100.0);
+        assert!(step > 0.0 && step <= 100.0, "step should be sized to the fixed 0..100 span, got {step}");
     }
 }
