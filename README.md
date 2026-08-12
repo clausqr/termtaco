@@ -174,6 +174,12 @@ ros2 topic hz /odom | grep --line-buffered 'average rate' | termtaco --title "ra
 seq 1 100 | awk '{print $1*0.7}' | termtaco --window 50
 ```
 
+<p align="center">
+  <img src="assets/demo-ping.gif" alt="termtaco Kalman-smoothed live ping RTT dial, real ping output next to the needle" width="640">
+</p>
+
+Live network latency, `ping` next to the dial (see `record-ping-demo.sh` for how this was recorded): the Kalman-smoothed needle, covariance band, and `±` uncertainty on the left, real jittery per-packet RTT scrolling on the right, using the command above.
+
 ### Test feeder
 
 `feed.sh` generates a stream for piping into termtaco. Modes:
