@@ -1,19 +1,20 @@
-# Gruvbox Dark — warm retro, aqua arc and an ember needle.
+# Gruvbox Dark: warm retro, aqua arc, ember-orange needle, golden value.
 #   cp themes/gruvbox.theme ~/.config/termtaco/theme
-arc = cyan
-tick_minor = dark_gray
-tick_major = yellow
-tick_label = white
-needle = light_red
-raw = blue
-min_max = blue
-mean = green
-band = magenta
-hub = white
-value = yellow
-stats = gray
-marker = blue
-title = green
-alarm = light_red
-led_off = dark_gray
-stale = yellow
+arc = #8ec07c
+tick_minor = #504945
+tick_major = #d79921
+tick_label = #ebdbb2
+needle = #fe8019
+raw = #83a598
+min_max = #458588
+mean = #b8bb26
+band = #d3869b
+hub = #ebdbb2
+value = #fabd2f
+stats = #928374
+marker = #83a598
+title = #8ec07c
+alarm = #fb4934
+led_off = #3c3836
+stale = #d79921
+uncertainty = #665c54

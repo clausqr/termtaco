@@ -1,4 +1,4 @@
-# The default theme, spelled out — every field termtaco understands, at its
+# The default theme, spelled out: every field termtaco understands, at its
 # built-in value. Delete what you don't want to change and edit the rest;
 # unmentioned fields simply stay at this default.
 arc = white
@@ -18,3 +18,4 @@ title = white
 alarm = light_red
 led_off = dark_gray
 stale = yellow
+uncertainty = dark_gray

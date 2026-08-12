@@ -1,22 +1,24 @@
-# A colorful termtaco theme. Copy to ~/.config/termtaco/theme to use it:
+# A colorful termtaco theme: vivid cyan arc, amber needle, spring-green value.
+# Copy to ~/.config/termtaco/theme to use it:
 #   cp themes/color.theme ~/.config/termtaco/theme
 #
 # Any line this file omits keeps its plain white/gray default, so you can
 # also start from a blank file and override just a couple of fields.
-arc = cyan
-tick_minor = dark_gray
-tick_major = cyan
-tick_label = white
-needle = yellow
-raw = light_blue
-min_max = blue
-mean = green
-band = magenta
-hub = white
-value = green
-stats = gray
-marker = blue
-title = cyan
-alarm = light_red
-led_off = dark_gray
-stale = yellow
+arc = #22d3ee
+tick_minor = #475569
+tick_major = #06b6d4
+tick_label = #e2e8f0
+needle = #fbbf24
+raw = #38bdf8
+min_max = #3b82f6
+mean = #34d399
+band = #a78bfa
+hub = #f1f5f9
+value = #4ade80
+stats = #64748b
+marker = #60a5fa
+title = #22d3ee
+alarm = #ef4444
+led_off = #334155
+stale = #facc15
+uncertainty = #64748b

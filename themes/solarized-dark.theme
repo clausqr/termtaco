@@ -1,19 +1,20 @@
-# Solarized Dark — muted teal and amber on deep sea.
+# Solarized Dark: teal arc, orange needle, the muted base tones for chrome.
 #   cp themes/solarized-dark.theme ~/.config/termtaco/theme
-arc = cyan
-tick_minor = dark_gray
-tick_major = blue
-tick_label = white
-needle = yellow
-raw = blue
-min_max = cyan
-mean = green
-band = magenta
-hub = white
-value = green
-stats = gray
-marker = blue
-title = cyan
-alarm = light_red
-led_off = dark_gray
-stale = yellow
+arc = #2aa198
+tick_minor = #586e75
+tick_major = #268bd2
+tick_label = #93a1a1
+needle = #cb4b16
+raw = #6c71c4
+min_max = #268bd2
+mean = #859900
+band = #d33682
+hub = #eee8d5
+value = #859900
+stats = #586e75
+marker = #268bd2
+title = #2aa198
+alarm = #dc322f
+led_off = #073642
+stale = #b58900
+uncertainty = #586e75

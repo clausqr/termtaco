@@ -1,19 +1,20 @@
-# Catppuccin Mocha — soft pastels on a warm dark base.
+# Catppuccin Mocha: mauve arc, pink needle, soft pastel greens and lavender.
 #   cp themes/catppuccin-mocha.theme ~/.config/termtaco/theme
-arc = magenta
-tick_minor = dark_gray
-tick_major = blue
-tick_label = white
-needle = light_red
-raw = cyan
-min_max = blue
-mean = green
-band = yellow
-hub = white
-value = green
-stats = gray
-marker = magenta
-title = magenta
-alarm = light_red
-led_off = dark_gray
-stale = yellow
+arc = #cba6f7
+tick_minor = #585b70
+tick_major = #89b4fa
+tick_label = #cdd6f4
+needle = #f5c2e7
+raw = #89dceb
+min_max = #74c7ec
+mean = #a6e3a1
+band = #b4befe
+hub = #cdd6f4
+value = #a6e3a1
+stats = #7f849c
+marker = #89b4fa
+title = #cba6f7
+alarm = #f38ba8
+led_off = #45475a
+stale = #f9e2af
+uncertainty = #6c7086

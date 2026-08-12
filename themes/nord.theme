@@ -1,19 +1,20 @@
-# Nord — frosty, low-contrast arctic blues.
+# Nord: frost blues and teal with an aurora-orange needle.
 #   cp themes/nord.theme ~/.config/termtaco/theme
-arc = light_blue
-tick_minor = dark_gray
-tick_major = cyan
-tick_label = white
-needle = light_red
-raw = blue
-min_max = blue
-mean = green
-band = magenta
-hub = white
-value = light_blue
-stats = gray
-marker = blue
-title = light_blue
-alarm = light_red
-led_off = dark_gray
-stale = yellow
+arc = #88c0d0
+tick_minor = #4c566a
+tick_major = #81a1c1
+tick_label = #e5e9f0
+needle = #d08770
+raw = #8fbcbb
+min_max = #5e81ac
+mean = #a3be8c
+band = #b48ead
+hub = #eceff4
+value = #88c0d0
+stats = #4c566a
+marker = #81a1c1
+title = #88c0d0
+alarm = #bf616a
+led_off = #3b4252
+stale = #ebcb8b
+uncertainty = #4c566a

@@ -1,9 +1,9 @@
 //! Color palette for the speedometer dial.
 //!
 //! Selected with `--theme NAME` for a built-in preset (baked into the binary
-//! at compile time from `themes/*.theme`, so it works with nothing on disk —
+//! at compile time from `themes/*.theme`, so it works with nothing on disk,
 //! see [`PRESETS`]), or fully customized via `~/.config/termtaco/theme` (see
-//! [`crate::infra::config`]) — one `field = color` line per element:
+//! [`crate::infra::config`]): one `field = color` line per element:
 //!
 //! ```text
 //! arc = cyan
@@ -13,7 +13,7 @@
 //!
 //! Colors are ANSI names (`red`, `light_blue`, `dark_gray`, `_` optional,
 //! case-insensitive) or `#rrggbb` hex. Any field left unmentioned keeps its
-//! [`Theme::bw`] default, so a one-line file is a valid (if minimal) theme —
+//! [`Theme::bw`] default, so a one-line file is a valid (if minimal) theme,
 //! and `--theme` takes priority over the config file when both are given.
 
 use ratatui::style::Color;
@@ -40,6 +40,9 @@ pub struct Theme {
     pub alarm: Color,
     pub led_off: Color,
     pub stale: Color,
+    /// The greyed-out Kalman-uncertainty band around the needle (`--kalman`
+    /// only), and the `±` figure alongside the value label.
+    pub uncertainty: Color,
 }
 
 /// Built-in theme presets, embedded at compile time from the repo's
@@ -66,6 +69,15 @@ pub fn preset_content(name: &str) -> Option<&'static str> {
     PRESETS.iter().find(|(n, _)| *n == name).map(|(_, src)| *src)
 }
 
+/// The `index`-th built-in preset, resolved to a [`Theme`], wrapping around
+/// past the end. Used to cycle through presets live (the running app's `t`
+/// key) without the caller needing to track names, just an ever-incrementing
+/// index.
+pub fn preset_theme_at(index: usize) -> Theme {
+    let (_, content) = PRESETS[index % PRESETS.len()];
+    Theme::from_file(content)
+}
+
 impl Theme {
     /// Default theme for a dark terminal: the gauge (arc, ticks, numbers,
     /// markers, needle, value, title) is white; `alarm` red and `stale` yellow
@@ -90,6 +102,7 @@ impl Theme {
             alarm: Color::LightRed,
             led_off: Color::DarkGray,
             stale: Color::Yellow,
+            uncertainty: Color::DarkGray,
         }
     }
 
@@ -131,6 +144,7 @@ impl Theme {
             "alarm" => self.alarm = color,
             "led_off" => self.led_off = color,
             "stale" => self.stale = color,
+            "uncertainty" => self.uncertainty = color,
             _ => {}
         }
     }
@@ -205,6 +219,15 @@ mod tests {
     }
 
     #[test]
+    fn uncertainty_field_actually_applies() {
+        // Regression: `set` once had every field wired except this one, so a
+        // theme file's `uncertainty = ...` line parsed fine (passing the
+        // "known field" check) but silently never reached the struct.
+        let t = Theme::from_file("uncertainty = magenta\n");
+        assert_eq!(t.uncertainty, Color::Magenta);
+    }
+
+    #[test]
     fn ignores_comments_blank_lines_and_unknown_keys() {
         let t = Theme::from_file("# a comment\n\nbogus_field = red\nneedle = yellow\n");
         assert_eq!(t.needle, Color::Yellow);
@@ -239,14 +262,28 @@ mod tests {
 
     #[test]
     fn preset_content_resolves_known_names() {
-        assert_eq!(Theme::from_file(preset_content("color").unwrap()).arc, Color::Cyan);
-        assert_eq!(Theme::from_file(preset_content("nord").unwrap()).arc, Color::LightBlue);
+        assert_eq!(Theme::from_file(preset_content("color").unwrap()).arc, Color::Rgb(0x22, 0xd3, 0xee));
+        assert_eq!(Theme::from_file(preset_content("nord").unwrap()).arc, Color::Rgb(0x88, 0xc0, 0xd0));
     }
 
     #[test]
     fn preset_content_rejects_unknown_names() {
         assert!(preset_content("neon").is_none());
         assert!(preset_content("").is_none());
+    }
+
+    #[test]
+    fn preset_theme_at_wraps_around() {
+        let first = preset_theme_at(0);
+        let wrapped = preset_theme_at(PRESETS.len());
+        assert_eq!(first.arc, wrapped.arc, "index should wrap back to the first preset");
+    }
+
+    #[test]
+    fn preset_theme_at_matches_named_lookup() {
+        let by_index = preset_theme_at(1);
+        let by_name = Theme::from_file(preset_content("color").unwrap());
+        assert_eq!(by_index.arc, by_name.arc, "index 1 should be the second PRESETS entry, \"color\"");
     }
 
     #[test]
@@ -258,17 +295,37 @@ mod tests {
         assert_eq!(t.stale, bw.stale);
     }
 
-    /// Every field name [`Theme::set`] recognizes — kept here, not derived,
+    #[test]
+    fn every_colored_preset_sets_its_own_uncertainty() {
+        // Regression: every non-`bw` preset once silently dropped its
+        // `uncertainty` line (a file-content edit issue, not a parser bug),
+        // so the covariance band and the `±` label rendered in bw's plain
+        // `Color::DarkGray` fallback regardless of the active theme, reading
+        // as "always black" against a dark terminal background.
+        let default_uncertainty = Theme::bw().uncertainty;
+        for (name, src) in PRESETS {
+            if *name == "bw" {
+                continue;
+            }
+            let t = Theme::from_file(src);
+            assert_ne!(
+                t.uncertainty, default_uncertainty,
+                "{name}: uncertainty should be set explicitly, not silently inherit bw's default"
+            );
+        }
+    }
+
+    /// Every field name [`Theme::set`] recognizes, kept here, not derived,
     /// so this test independently catches a typo in either place.
     const FIELDS: &[&str] = &[
         "arc", "tick_minor", "tick_major", "tick_label", "needle", "raw", "min_max", "mean", "band", "hub",
-        "value", "stats", "marker", "title", "alarm", "led_off", "stale",
+        "value", "stats", "marker", "title", "alarm", "led_off", "stale", "uncertainty",
     ];
 
     /// Every embedded preset should parse with no dropped lines: each
     /// non-comment, non-blank line names a real field and a color
     /// `parse_color` understands. Catches a typo'd key or a color name our
-    /// parser doesn't support before it ships silently broken — and, since
+    /// parser doesn't support before it ships silently broken, and, since
     /// `PRESET_NAMES` is hand-kept, that the two stay in sync with `PRESETS`.
     #[test]
     fn every_preset_sets_only_known_fields_with_valid_colors() {
