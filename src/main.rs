@@ -29,6 +29,11 @@ struct Args {
     kalman: bool,
     kalman_q: f64,
     kalman_r: f64,
+    kalman_adaptive: bool,
+    kalman_adaptive_window: usize,
+    kalman_q_min: f64,
+    kalman_q_max: f64,
+    kalman_adaptive_gain: f64,
     max_decay: Option<Duration>,
     max_decay_target: f64,
     needle_inertia: Option<Duration>,
@@ -49,6 +54,10 @@ const DEFAULT_STALE_SECS: f64 = 3.0;
 const DEFAULT_BORDER_LABEL: &str = "";
 const DEFAULT_KALMAN_Q: f64 = 0.001;
 const DEFAULT_KALMAN_R: f64 = 0.1;
+const DEFAULT_KALMAN_ADAPTIVE_WINDOW: usize = 20;
+const DEFAULT_KALMAN_ADAPTIVE_GAIN: f64 = 0.1;
+// Ceiling multiplier applied to --kalman-q's value when --kalman-q-max isn't given.
+const DEFAULT_KALMAN_Q_MAX_MULT: f64 = 1000.0;
 // 0 = off, the needle snaps straight to the reading (today's behavior).
 const DEFAULT_NEEDLE_INERTIA_SECS: f64 = 0.0;
 
@@ -85,6 +94,16 @@ OPTIONS:
                           measurement underneath
     --kalman-q Q         Kalman process noise variance per second (default: 0.001)
     --kalman-r R         Kalman measurement noise variance (default: 0.1)
+    --kalman-adaptive    let the filter adapt --kalman-q online from the innovation
+                          sequence (NIS) instead of holding it fixed; reacts to
+                          maneuvers/regime changes the fixed q wasn't tuned for
+    --kalman-adaptive-window N
+                         samples averaged for the NIS statistic (default: 20)
+    --kalman-q-min Q     floor for the adapted q (default: --kalman-q's value)
+    --kalman-q-max Q     ceiling for the adapted q (default: 1000x --kalman-q)
+    --kalman-adaptive-gain G
+                         step size on log q per adaptation; higher reacts
+                          faster but noisier (default: 0.1)
     --max-decay SECS     decay the max tick toward max-decay-target x mean once
                           idle, instead of holding until it exits the window
     --max-decay-target M equilibrium multiplier of the mean for --max-decay (default: 2.0)
@@ -135,6 +154,11 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
     let mut kalman = false;
     let mut kalman_q = DEFAULT_KALMAN_Q;
     let mut kalman_r = DEFAULT_KALMAN_R;
+    let mut kalman_adaptive = false;
+    let mut kalman_adaptive_window = DEFAULT_KALMAN_ADAPTIVE_WINDOW;
+    let mut kalman_q_min: Option<f64> = None;
+    let mut kalman_q_max: Option<f64> = None;
+    let mut kalman_adaptive_gain = DEFAULT_KALMAN_ADAPTIVE_GAIN;
     let mut max_decay_secs: Option<f64> = None;
     let mut max_decay_target = display::speedometer::DEFAULT_MAX_DECAY_TARGET;
     let mut needle_inertia_secs = DEFAULT_NEEDLE_INERTIA_SECS;
@@ -199,6 +223,21 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
             ("--kalman", None) => kalman = true,
             ("--kalman-q", v) => kalman_q = parse_f64("--kalman-q", flag_value(v, &mut it).as_deref(), 1e-9, 1e9)?,
             ("--kalman-r", v) => kalman_r = parse_f64("--kalman-r", flag_value(v, &mut it).as_deref(), 1e-9, 1e9)?,
+            ("--kalman-adaptive", None) => kalman_adaptive = true,
+            ("--kalman-adaptive-window", v) => {
+                kalman_adaptive_window =
+                    parse_usize("--kalman-adaptive-window", flag_value(v, &mut it).as_deref(), 2, 10_000)?
+            }
+            ("--kalman-q-min", v) => {
+                kalman_q_min = Some(parse_f64("--kalman-q-min", flag_value(v, &mut it).as_deref(), 1e-9, 1e9)?)
+            }
+            ("--kalman-q-max", v) => {
+                kalman_q_max = Some(parse_f64("--kalman-q-max", flag_value(v, &mut it).as_deref(), 1e-9, 1e9)?)
+            }
+            ("--kalman-adaptive-gain", v) => {
+                kalman_adaptive_gain =
+                    parse_f64("--kalman-adaptive-gain", flag_value(v, &mut it).as_deref(), 1e-6, 10.0)?
+            }
             ("--max-decay", v) => {
                 max_decay_secs = Some(parse_f64("--max-decay", flag_value(v, &mut it).as_deref(), 0.01, 86_400.0)?)
             }
@@ -230,6 +269,13 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         }
     }
 
+    let kalman_q_min = kalman_q_min.unwrap_or(kalman_q);
+    let kalman_q_max = kalman_q_max.unwrap_or(kalman_q * DEFAULT_KALMAN_Q_MAX_MULT);
+    if kalman_q_min >= kalman_q_max {
+        eprintln!("--kalman-q-min ({kalman_q_min}) must be less than --kalman-q-max ({kalman_q_max})");
+        return Err(ExitCode::from(2));
+    }
+
     Ok(Args {
         window,
         display,
@@ -245,6 +291,11 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         kalman,
         kalman_q,
         kalman_r,
+        kalman_adaptive,
+        kalman_adaptive_window,
+        kalman_q_min,
+        kalman_q_max,
+        kalman_adaptive_gain,
         max_decay: max_decay_secs.map(Duration::from_secs_f64),
         max_decay_target,
         needle_inertia: (needle_inertia_secs > 0.0).then(|| Duration::from_secs_f64(needle_inertia_secs)),
@@ -296,6 +347,17 @@ fn parse_f64(name: &str, v: Option<&str>, min: f64, max: f64) -> Result<f64, Exi
         Some(n) if n.is_finite() && (min..=max).contains(&n) => Ok(n),
         _ => {
             eprintln!("{name} needs a number between {min} and {max}");
+            Err(ExitCode::from(2))
+        }
+    }
+}
+
+/// Parse a `usize` flag within `[min, max]`, or report a clear error.
+fn parse_usize(name: &str, v: Option<&str>, min: usize, max: usize) -> Result<usize, ExitCode> {
+    match v.and_then(|v| v.parse::<usize>().ok()) {
+        Some(n) if (min..=max).contains(&n) => Ok(n),
+        _ => {
+            eprintln!("{name} needs an integer between {min} and {max}");
             Err(ExitCode::from(2))
         }
     }
@@ -363,6 +425,11 @@ fn main() -> ExitCode {
         kalman: args.kalman,
         kalman_q: args.kalman_q,
         kalman_r: args.kalman_r,
+        kalman_adaptive: args.kalman_adaptive,
+        kalman_adaptive_window: args.kalman_adaptive_window,
+        kalman_q_min: args.kalman_q_min,
+        kalman_q_max: args.kalman_q_max,
+        kalman_adaptive_gain: args.kalman_adaptive_gain,
         animate: needs_animation(args.kalman, args.needle_inertia, args.max_decay),
     };
 
@@ -404,6 +471,11 @@ mod tests {
         assert_eq!(a.min, None);
         assert_eq!(a.max, None);
         assert!(!a.kalman);
+        assert!(!a.kalman_adaptive);
+        assert_eq!(a.kalman_adaptive_window, DEFAULT_KALMAN_ADAPTIVE_WINDOW);
+        assert_eq!(a.kalman_q_min, DEFAULT_KALMAN_Q);
+        assert_eq!(a.kalman_q_max, DEFAULT_KALMAN_Q * DEFAULT_KALMAN_Q_MAX_MULT);
+        assert_eq!(a.kalman_adaptive_gain, DEFAULT_KALMAN_ADAPTIVE_GAIN);
         assert_eq!(a.max_decay, None);
         assert_eq!(a.needle_inertia, None);
         assert_eq!(a.theme_file, None);
@@ -499,6 +571,33 @@ mod tests {
     fn numeric_bounds_are_enforced_on_both_forms() {
         assert!(args(&["--kalman-q", "-1"]).is_err());
         assert!(args(&["--kalman-q=-1"]).is_err());
+    }
+
+    #[test]
+    fn kalman_adaptive_flag_round_trips() {
+        let a = args(&["--kalman-adaptive"]).unwrap();
+        assert!(a.kalman_adaptive);
+    }
+
+    #[test]
+    fn kalman_q_min_and_max_default_relative_to_kalman_q() {
+        let a = args(&["--kalman-q", "0.5"]).unwrap();
+        assert_eq!(a.kalman_q_min, 0.5);
+        assert_eq!(a.kalman_q_max, 0.5 * DEFAULT_KALMAN_Q_MAX_MULT);
+    }
+
+    #[test]
+    fn kalman_q_min_must_be_less_than_kalman_q_max() {
+        assert!(args(&["--kalman-q-min", "1.0", "--kalman-q-max", "0.5"]).is_err());
+        assert!(args(&["--kalman-q-min", "1.0", "--kalman-q-max", "1.0"]).is_err());
+        assert!(args(&["--kalman-q-min", "0.1", "--kalman-q-max", "0.5"]).is_ok());
+    }
+
+    #[test]
+    fn kalman_adaptive_window_out_of_range_errors() {
+        assert!(args(&["--kalman-adaptive-window", "1"]).is_err(), "below the minimum of 2");
+        assert!(args(&["--kalman-adaptive-window", "abc"]).is_err());
+        assert!(args(&["--kalman-adaptive-window", "50"]).is_ok());
     }
 
     #[test]

@@ -63,6 +63,11 @@ reads key events from the controlling tty.
 | `--kalman`       | smooth the needle/value with a Kalman filter (stats stay raw) | off |
 | `--kalman-q Q`   | Kalman process noise variance per second     | 0.001         |
 | `--kalman-r R`   | Kalman measurement noise variance            | 0.1           |
+| `--kalman-adaptive` | adapt `--kalman-q` online from the innovation sequence (NIS) instead of holding it fixed | off |
+| `--kalman-adaptive-window N` | samples averaged for the NIS statistic driving `--kalman-adaptive` | 20 |
+| `--kalman-q-min Q` | floor for the adapted `q`                  | `--kalman-q`'s value |
+| `--kalman-q-max Q` | ceiling for the adapted `q`                | 1000× `--kalman-q` |
+| `--kalman-adaptive-gain G` | step size on `log q` per adaptation; higher reacts faster but noisier | 0.1 |
 | `--max-decay SECS` | decay the max tick toward `max-decay-target × mean` once idle, instead of holding until it exits the window | off (holds) |
 | `--max-decay-target M` | equilibrium multiplier of the mean for `--max-decay` | 2.0    |
 | `--needle-inertia SECS` | give the needle mass: it lags the reading and settles over ~5× SECS | 0 (snaps) |
@@ -280,6 +285,22 @@ setting is nearly invisible on top of it.
 - To deliberately let the mechanical feel dominate regardless of Kalman
   tuning, set `tau` well above `tau_kalman` for your `q`/`r`/`dt`.
 
+### Adaptive `q` (`--kalman-adaptive`)
+
+A single fixed `q` is a bet on one motion regime: tuned quiet, it lags behind
+a real maneuver; tuned fast, it's needlessly jumpy at rest. `--kalman-adaptive`
+re-estimates `q` online instead, driven by the normalized innovation squared
+(NIS): `nu^2 / s`, the squared innovation over its predicted variance, which
+should average ~1 for a consistent filter. Every `--kalman-adaptive-window`
+measurements, if the windowed mean NIS drifts outside `[0.9, 1.1]`, `q` is
+nudged in log space toward the value that would have made it consistent
+(`--kalman-adaptive-gain` sets the step size), clamped to
+`[--kalman-q-min, --kalman-q-max]`.
+
+`--kalman-q-min` matters most: set it no higher than the process noise of the
+quietest motion you expect, or the filter starts each quiet stretch stiffer
+than it should and reacts sluggishly right as the next maneuver begins.
+
 ## Features
 
 - **Radial 270° dial**, drawn as a true circle at any pane size (the cell aspect
@@ -303,6 +324,9 @@ setting is nearly invisible on top of it.
   live one.
 - **Kalman smoothing** (`--kalman`): steadies the needle and value label on
   noisy feeds; the min/max/mean/stddev ticks keep tracking the raw samples.
+- **Adaptive process noise** (`--kalman-adaptive`): lets the Kalman filter
+  re-tune its own `q` online from the innovation sequence, instead of a
+  single fixed value that's either sluggish or jumpy depending on the regime.
 - **Decaying max** (`--max-decay`): instead of holding rigidly until the peak
   sample ages out of the window, the max tick exponentially decays toward
   `max-decay-target × mean` once idle, snapping back up instantly on a fresh

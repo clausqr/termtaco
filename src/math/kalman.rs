@@ -8,7 +8,17 @@
 //! caller-supplied elapsed time so the filter itself stays free of wall-clock
 //! reads: the render loop and the stdin reader advance at different,
 //! irregular rates (e.g. a 60fps display against ~1Hz ping replies).
+//!
+//! [`Kalman::new_adaptive`] builds a filter that additionally re-estimates
+//! its own process noise `q` online, driven by the normalized innovation
+//! squared (NIS): `nu^2 / s`, where `nu` is the innovation and `s` its
+//! variance. For a 1-D measurement a consistent filter has NIS averaging ~1;
+//! a windowed mean well above 1 means the filter is too confident (the
+//! tracked signal is maneuvering faster than `q` accounts for), well below 1
+//! means it's too loose (fitting noise). See [`Kalman::adapt_q`] for the
+//! update rule.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 /// Recursive constant-velocity Kalman filter. `q` is the process noise
@@ -26,11 +36,49 @@ pub struct Kalman {
     p01: f64,
     p11: f64,
     seeded: bool,
+    adaptive: Option<AdaptiveQ>,
 }
+
+/// NIS-windowed online adaptation of `q`. Only present on filters built with
+/// [`Kalman::new_adaptive`]; a plain [`Kalman::new`] never allocates this.
+struct AdaptiveQ {
+    nis: VecDeque<f64>,
+    window: usize,
+    q_min: f64,
+    q_max: f64,
+    gain: f64,
+}
+
+/// Windowed mean NIS is left alone inside this band: a 1-D measurement's NIS
+/// averages ~1 for a consistent filter, so a mean this close to 1 isn't
+/// worth reacting to (it would just chase sampling noise in the NIS
+/// statistic itself).
+const ADAPT_DEADBAND: (f64, f64) = (0.9, 1.1);
 
 impl Kalman {
     pub fn new(q: f64, r: f64) -> Self {
-        Kalman { q, r, pos: 0.0, vel: 0.0, p00: 1.0, p01: 0.0, p11: 1.0, seeded: false }
+        Kalman { q, r, pos: 0.0, vel: 0.0, p00: 1.0, p01: 0.0, p11: 1.0, seeded: false, adaptive: None }
+    }
+
+    /// Like [`new`](Self::new), but `q` is only the *initial* process noise:
+    /// after each `window` measurements, if the mean normalized-innovation-
+    /// squared (NIS) strays outside [`ADAPT_DEADBAND`], `q` is nudged in log
+    /// space toward the value that would have made the filter consistent,
+    /// clamped to `[q_min, q_max]`. `gain` is the step size on `log q` per
+    /// adaptation (0.05 = smooth, 0.2 = fast); `q_min` should be no larger
+    /// than the process noise of the quietest motion expected, or the filter
+    /// will react sluggishly right as a maneuver begins.
+    pub fn new_adaptive(q0: f64, r: f64, window: usize, q_min: f64, q_max: f64, gain: f64) -> Self {
+        let mut k = Kalman::new(q0, r);
+        k.adaptive = Some(AdaptiveQ { nis: VecDeque::with_capacity(window), window, q_min, q_max, gain });
+        k
+    }
+
+    /// The filter's current process noise: the value passed to `new`,
+    /// or its latest online-adapted value on a [`new_adaptive`](Self::new_adaptive) filter.
+    #[cfg(test)]
+    fn q(&self) -> f64 {
+        self.q
     }
 
     /// Advance the estimate by `dt` with no new measurement, returning the
@@ -79,7 +127,38 @@ impl Kalman {
         self.p01 = p01;
         self.p11 = p11;
 
+        if self.adaptive.is_some() {
+            self.adapt_q(y * y / s);
+        }
+
         self.pos
+    }
+
+    /// Fold one measurement's normalized innovation squared (`nu^2 / s`)
+    /// into the adaptation window and, once it's full, nudge `q` toward
+    /// consistency. A no-op on a non-adaptive filter (checked by the caller)
+    /// or while the window is still filling: warm-up keeps the prior `q`
+    /// rather than reacting to a partial, noisier mean.
+    fn adapt_q(&mut self, nis: f64) {
+        let a = self.adaptive.as_mut().expect("adapt_q called on a non-adaptive filter");
+        if a.nis.len() == a.window {
+            a.nis.pop_front();
+        }
+        a.nis.push_back(nis);
+        if a.nis.len() < a.window {
+            return;
+        }
+
+        let mean_nis = a.nis.iter().sum::<f64>() / a.window as f64;
+        let (lo, hi) = ADAPT_DEADBAND;
+        if (lo..=hi).contains(&mean_nis) {
+            return;
+        }
+        // Move log q toward log(mean_nis) (the multiplier that would have
+        // made the mean NIS exactly 1), bounded so a single outlier window
+        // can't blow q up or down in one step.
+        let step = mean_nis.ln().clamp(-1.0, 1.0);
+        self.q = (self.q * (a.gain * step).exp()).clamp(a.q_min, a.q_max);
     }
 
     /// Standard deviation of the position estimate: `sqrt(p00)`, the
@@ -237,5 +316,72 @@ mod tests {
         let settled = k.uncertainty();
         k.predict(Duration::from_secs(10));
         assert!(k.uncertainty() > settled, "a long gap with no measurement should widen the uncertainty");
+    }
+
+    #[test]
+    fn non_adaptive_filter_never_changes_q() {
+        let mut k = Kalman::new(0.001, 1.0);
+        for i in 0..100 {
+            let noisy = if i % 2 == 0 { 6.0 } else { 4.0 };
+            k.update(noisy, TICK);
+        }
+        assert_eq!(k.q(), 0.001);
+    }
+
+    #[test]
+    fn adaptive_q_holds_steady_during_warm_up() {
+        let mut k = Kalman::new_adaptive(0.01, 1.0, 5, 1e-6, 1e6, 0.1);
+        k.update(5.0, TICK); // seeds, no NIS sample yet
+        for _ in 0..3 {
+            // fewer than `window` (5) samples: still warming up
+            k.update(5.0, TICK);
+        }
+        assert_eq!(k.q(), 0.01, "q shouldn't move before the NIS window fills");
+    }
+
+    #[test]
+    fn adaptive_q_grows_when_innovations_run_persistently_large() {
+        // A model mismatch (constant-velocity can't track wide swings) keeps
+        // the NIS well above 1, which should push q up from its initial value.
+        let mut k = Kalman::new_adaptive(0.001, 1.0, 5, 1e-6, 1e6, 0.1);
+        k.update(0.0, TICK); // seed
+        for i in 0..20 {
+            let z = if i % 2 == 0 { 1000.0 } else { -1000.0 };
+            k.update(z, TICK);
+        }
+        assert!(k.q() > 0.001, "persistently large NIS should grow q, got {}", k.q());
+    }
+
+    #[test]
+    fn adaptive_q_shrinks_when_innovations_run_persistently_small() {
+        // A constant, noise-free measurement keeps the innovation near zero,
+        // so the NIS stays well below 1, which should pull q down toward q_min.
+        let mut k = Kalman::new_adaptive(0.5, 1.0, 5, 1e-6, 1e6, 0.1);
+        k.update(5.0, TICK); // seed
+        for _ in 0..20 {
+            k.update(5.0, TICK);
+        }
+        assert!(k.q() < 0.5, "persistently small NIS should shrink q, got {}", k.q());
+    }
+
+    #[test]
+    fn adaptive_q_is_clamped_to_q_max() {
+        let mut k = Kalman::new_adaptive(0.001, 1.0, 5, 1e-6, 0.002, 0.1);
+        k.update(0.0, TICK); // seed
+        for i in 0..200 {
+            let z = if i % 2 == 0 { 1000.0 } else { -1000.0 };
+            k.update(z, TICK);
+        }
+        assert!(k.q() <= 0.002, "q should never exceed q_max, got {}", k.q());
+    }
+
+    #[test]
+    fn adaptive_q_is_clamped_to_q_min() {
+        let mut k = Kalman::new_adaptive(0.5, 1.0, 5, 0.4, 1e6, 0.1);
+        k.update(5.0, TICK); // seed
+        for _ in 0..200 {
+            k.update(5.0, TICK);
+        }
+        assert!(k.q() >= 0.4, "q should never drop below q_min, got {}", k.q());
     }
 }
