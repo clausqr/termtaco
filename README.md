@@ -345,7 +345,7 @@ See [`docs/tuning.md`](docs/tuning.md) for the derivation (the filter's
   red while the gauge is capped. The LED on the lower left lights yellow when the
   feed is stale, and the needle greys out.
 
-## How it compares
+## How it compares (ttyplot, gping, ratatui Gauge)
 
 Nothing off the shelf draws a *needle dial* with annotated min/max/σ marks:
 
@@ -353,6 +353,8 @@ Nothing off the shelf draws a *needle dial* with annotated min/max/σ marks:
 - **gping** is a ping-specific line graph.
 - **ratatui's `Gauge`** and rich/textual draw horizontal progress bars.
 
+As a ttyplot or gping alternative, `termtaco` trades the time axis for an
+instrument readout: reach for it when you want current state, not history.
 A dial reads instantaneous state at a glance (where the needle sits, how wide
 the spread is, whether the value just ran off the top), which line plots and bars
 don't surface as directly. That niche is why `termtaco` is a small standalone
