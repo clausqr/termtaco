@@ -11,8 +11,12 @@ watching real-time metrics, rates, and any stream of floats at a glance.
 [![docs.rs](https://docs.rs/termtaco/badge.svg)](https://docs.rs/termtaco)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
+<!-- Regenerate with:
+     asciinema rec ping-demo.cast -c "ping 8.8.8.8 | termtaco --parser ping --title 'ping ms' --theme gruvbox --0 --kalman --kalman-adaptive --needle-inertia 0.5"
+     agg ping-demo.cast assets/demo.gif
+-->
 <p align="center">
-  <img src="assets/demo.gif" alt="termtaco terminal speedometer gauge TUI demo: a live needle dial in the terminal" width="640">
+  <img src="assets/demo.gif" alt="termtaco terminal speedometer gauge TUI demo: live ping RTT dial with Kalman smoothing and the gruvbox theme" width="640">
 </p>
 
 `termtaco` reads one float per line from **stdin** (leniently: it grabs the
@@ -94,101 +98,28 @@ Press `t` to cycle through the built-in presets live. Quit with `q`, `Esc`, or `
 
 ### Theme
 
-The dial's palette is plain white by default (red/yellow are reserved for the
-overflow/stale alarms). Pick a built-in preset by name, no files needed:
+Pick a built-in preset by name (`bw`, `color`, `catppuccin-mocha`, `dracula`,
+`gruvbox`, `nord`, `solarized-dark`, `tokyo-night`), or write your own
+`~/.config/termtaco/theme`:
 
 ```sh
 ./feed.sh sine | termtaco --theme nord
 ```
 
-| Preset | |
-| --- | --- |
-| `bw` | plain white/gray, the default |
-| `color` | a general colorful palette |
-| `catppuccin-mocha` | soft pastels on a warm dark base |
-| `dracula` | neon purple, pink, and green |
-| `gruvbox` | warm retro, aqua arc, ember needle |
-| `nord` | frosty, low-contrast arctic blues |
-| `solarized-dark` | muted teal and amber on deep sea |
-| `tokyo-night` | cool blues and violet |
-
-For a fully custom palette, write `~/.config/termtaco/theme`: one
-`field = color` line per dial element, e.g.
-
-```
-needle = yellow
-arc = cyan
-alarm = "#ff0055"
-```
-
-Colors are ANSI names (`red`, `light_blue`, `dark_gray`, underscores optional,
-case-insensitive) or `#rrggbb` hex. Fields the file doesn't mention keep their
-default, so a one-line file is a valid theme. `--print-theme NAME` dumps any
-built-in preset as a starting point: this works from a plain `cargo install
-termtaco` with nothing cloned, since the presets are compiled into the binary:
-
-```sh
-mkdir -p ~/.config/termtaco
-termtaco --print-theme nord > ~/.config/termtaco/theme
-```
-
-(Working from a checkout of this repo, [`themes/`](themes/) has the same
-files directly: `cp themes/nord.theme ~/.config/termtaco/theme`.)
-
-`--theme` overrides the config file when both are given. An absent config
-file, or a line with an unknown field or an unparsable color, falls back to
-the default for that one field.
-
-```sh
-mkdir -p ~/.config/termtaco
-cp themes/nord.theme ~/.config/termtaco/theme
-```
-
-An absent file, or a line with an unknown field or an unparsable color, falls
-back to the default for that one field: nothing to set up for the default
-look, and a typo can't break the dial.
+See [`docs/theming.md`](docs/theming.md) for the full preset table, the
+custom theme file format, and `--print-theme`.
 
 ### Profiles
 
-A good dial for a given source takes a handful of flags together; `--profile
-NAME` loads a named bundle of them so you don't have to retype the combination
-every time:
+`--profile NAME` loads a named bundle of flags so you don't have to retype a
+long combination every time; `ping` ships built in:
 
 ```sh
 ping 8.8.8.8 | termtaco --profile ping
 ```
 
-`ping` ships built in (it's the long-form command from the
-[examples](#examples) below, saved as a profile). Flags given on the command
-line alongside `--profile` override its values, the same way `--theme`
-overrides the theme file:
-
-```sh
-ping 8.8.8.8 | termtaco --profile ping --kalman-r 900
-```
-
-For a custom profile, write `~/.config/termtaco/profiles/NAME`: one
-`flag = value` or bare `flag` line per option (bare for flags that take no
-value, like `kalman` or `zero`), e.g.
-
-```
-parser = ping
-title = ping ms
-zero
-kalman
-kalman-r = 1300
-```
-
-`--print-profile NAME` dumps a built-in as a starting point, same idea as
-`--print-theme`:
-
-```sh
-mkdir -p ~/.config/termtaco/profiles
-termtaco --print-profile ping > ~/.config/termtaco/profiles/myping
-```
-
-A `NAME` containing a `/` is read as a literal path instead, e.g. `--profile
-./myping.profile`, without needing to install it anywhere first.
+See [`docs/profiles.md`](docs/profiles.md) for the custom profile file
+format, override precedence, and `--print-profile`.
 
 ### Parsers
 

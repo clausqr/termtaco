@@ -12,7 +12,7 @@ keywords = ["tui", "cli", "gauge", "monitoring", "ratatui"]
 categories = ["command-line-utilities", "visualization"]
 # Demo GIFs and recording tooling aren't needed to build or run the
 # installed binary; keeps the published .crate small.
-exclude = ["assets/", "demo.tape", "record-ping-demo.sh", "*.cast", "*.zip"]
+exclude = ["assets/", "record-ping-demo.sh", "*.cast", "*.zip"]
 
 [[bin]]
 name = "termtaco"
