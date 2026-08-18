@@ -5,4 +5,5 @@ pub mod app;
 pub mod config;
 pub mod feed;
 pub mod input;
+pub mod profile;
 pub mod terminal;

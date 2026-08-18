@@ -55,6 +55,22 @@ struct AdaptiveQ {
 /// statistic itself).
 const ADAPT_DEADBAND: (f64, f64) = (0.9, 1.1);
 
+/// A [`Kalman`] filter's runtime knobs, bundled so callers thread one value
+/// through instead of a long positional list. `adaptive: false` means a plain
+/// fixed-`q` filter; `window`/`q_min`/`q_max`/`gain` are only meaningful when
+/// it's `true`. See [`Kalman::new`] and [`Kalman::new_adaptive`] for what each
+/// field does.
+#[derive(Clone, Copy, Debug)]
+pub struct KalmanTuning {
+    pub q: f64,
+    pub r: f64,
+    pub adaptive: bool,
+    pub window: usize,
+    pub q_min: f64,
+    pub q_max: f64,
+    pub gain: f64,
+}
+
 impl Kalman {
     pub fn new(q: f64, r: f64) -> Self {
         Kalman { q, r, pos: 0.0, vel: 0.0, p00: 1.0, p01: 0.0, p11: 1.0, seeded: false, adaptive: None }
@@ -72,6 +88,17 @@ impl Kalman {
         let mut k = Kalman::new(q0, r);
         k.adaptive = Some(AdaptiveQ { nis: VecDeque::with_capacity(window), window, q_min, q_max, gain });
         k
+    }
+
+    /// [`new`](Self::new) or [`new_adaptive`](Self::new_adaptive), picked by
+    /// `tuning.adaptive`, from one bundled set of knobs instead of a long
+    /// positional argument list.
+    pub fn from_tuning(tuning: &KalmanTuning) -> Self {
+        if tuning.adaptive {
+            Kalman::new_adaptive(tuning.q, tuning.r, tuning.window, tuning.q_min, tuning.q_max, tuning.gain)
+        } else {
+            Kalman::new(tuning.q, tuning.r)
+        }
     }
 
     /// The filter's current process noise: the value passed to `new`,

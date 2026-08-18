@@ -47,10 +47,13 @@ reads key events from the controlling tty.
 
 ### Options
 
+`--help` prints the everyday flags below; `--help-all` adds the advanced
+tuning surface (Kalman internals, decay/inertia curves, timing) so the
+default help stays short.
+
 | Option           | Description                                  | Default       |
 | ---------------- | -------------------------------------------- | ------------- |
 | `--window N`     | samples retained for the statistics window   | 200           |
-| `--display NAME` | renderer to use                              | `speedometer` |
 | `--parser SPEC`  | how to extract the value from each line (see below) | `first` |
 | `--title TEXT`   | title shown at the top of the dial           | none          |
 | `--border-label TEXT` | text in the dial's border               | none          |
@@ -58,9 +61,20 @@ reads key events from the controlling tty.
 | `--min VALUE`    | fix the scale's lower bound instead of auto-scaling | auto      |
 | `--max VALUE`    | fix the scale's upper bound instead of auto-scaling; a value past it stays capped and alarmed rather than rescaling | auto |
 | `--fps N`        | refresh rate in frames per second            | 30            |
+| `--kalman`       | smooth the needle/value with a Kalman filter (stats stay raw); tuning flags are in `--help-all` | off |
+| `--theme NAME`   | built-in color preset (see below)            | `bw`          |
+| `--profile NAME` | load a named bundle of flags (see below)     | none          |
+| `-h`, `--help`   | print help                                   |               |
+| `--help-all`     | print help including advanced tuning flags   |               |
+
+<details>
+<summary>Advanced options (<code>--help-all</code>)</summary>
+
+| Option           | Description                                  | Default       |
+| ---------------- | -------------------------------------------- | ------------- |
+| `--display NAME` | renderer to use                              | `speedometer` |
 | `--stale-after SECS` | silence before the reading is flagged stale | 3         |
 | `--overflow-hold SECS` | hold a capped reading this long before rescaling | 1   |
-| `--kalman`       | smooth the needle/value with a Kalman filter (stats stay raw) | off |
 | `--kalman-q Q`   | Kalman process noise variance per second     | 0.001         |
 | `--kalman-r R`   | Kalman measurement noise variance            | 0.1           |
 | `--kalman-adaptive` | adapt `--kalman-q` online from the innovation sequence (NIS) instead of holding it fixed | off |
@@ -71,9 +85,10 @@ reads key events from the controlling tty.
 | `--max-decay SECS` | decay the max tick toward `max-decay-target × mean` once idle, instead of holding until it exits the window | off (holds) |
 | `--max-decay-target M` | equilibrium multiplier of the mean for `--max-decay` | 2.0    |
 | `--needle-inertia SECS` | give the needle mass: it lags the reading and settles over ~5× SECS | 0 (snaps) |
-| `-h`, `--help`   | print help                                   |               |
-| `--theme NAME`   | built-in color preset (see below)            | `bw`          |
 | `--print-theme NAME` | print a preset's theme-file source to stdout, then exit |   |
+| `--print-profile NAME` | print a preset's profile-file source to stdout, then exit |   |
+
+</details>
 
 Press `t` to cycle through the built-in presets live. Quit with `q`, `Esc`, or `Ctrl-C`.
 
@@ -133,6 +148,48 @@ An absent file, or a line with an unknown field or an unparsable color, falls
 back to the default for that one field: nothing to set up for the default
 look, and a typo can't break the dial.
 
+### Profiles
+
+A good dial for a given source takes a handful of flags together; `--profile
+NAME` loads a named bundle of them so you don't have to retype the combination
+every time:
+
+```sh
+ping 8.8.8.8 | termtaco --profile ping
+```
+
+`ping` ships built in (it's the long-form command from the
+[examples](#examples) below, saved as a profile). Flags given on the command
+line alongside `--profile` override its values, the same way `--theme`
+overrides the theme file:
+
+```sh
+ping 8.8.8.8 | termtaco --profile ping --kalman-r 900
+```
+
+For a custom profile, write `~/.config/termtaco/profiles/NAME`: one
+`flag = value` or bare `flag` line per option (bare for flags that take no
+value, like `kalman` or `zero`), e.g.
+
+```
+parser = ping
+title = ping ms
+zero
+kalman
+kalman-r = 1300
+```
+
+`--print-profile NAME` dumps a built-in as a starting point, same idea as
+`--print-theme`:
+
+```sh
+mkdir -p ~/.config/termtaco/profiles
+termtaco --print-profile ping > ~/.config/termtaco/profiles/myping
+```
+
+A `NAME` containing a `/` is read as a literal path instead, e.g. `--profile
+./myping.profile`, without needing to install it anywhere first.
+
 ### Parsers
 
 By default termtaco uses the first number on each line, but some outputs put
@@ -169,6 +226,9 @@ ping 8.8.8.8 | termtaco --parser ping --title "ping ms" --0
 # enough to track a real latency shift, slow enough to average out jitter.
 ping 8.8.8.8 | termtaco --parser ping --title "ping ms" --0 --kalman \
     --kalman-q 0.5 --kalman-r 1300 --needle-inertia 0.5
+
+# The command above, saved as a profile (see Profiles below):
+ping 8.8.8.8 | termtaco --profile ping
 
 # ROS 2 topic rate as a live dial. `ros2 topic hz` prints a multi-line block
 # per sample, so keep only the "average rate" line (--line-buffered flushes
@@ -341,6 +401,9 @@ than it should and reacts sluggishly right as the next maneuver begins.
   there.
 - White by default; red is reserved for the overflow alarm, yellow for stale.
 - **No async runtime.** A stdin reader thread feeds the render loop over a channel.
+- **Profiles** (`--profile`): a named bundle of flags, loaded from
+  `~/.config/termtaco/profiles` or a built-in preset (`ping` ships); CLI
+  flags given alongside `--profile` override its values.
 
 ## Reading the dial
 
