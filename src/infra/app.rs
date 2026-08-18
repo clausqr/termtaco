@@ -14,7 +14,7 @@ use crate::display::{Display, Reading};
 use crate::infra::feed::Feed;
 use crate::infra::input;
 use crate::infra::terminal::Tui;
-use crate::math::kalman::Kalman;
+use crate::math::kalman::{Kalman, KalmanTuning};
 
 /// Floor on how long `event::poll` is asked to wait, so a frame deadline
 /// that's already passed (or nearly has) still yields a nonzero, non-busy
@@ -34,23 +34,8 @@ pub struct LoopConfig {
     /// How to extract a value from each input line.
     pub parser: input::Parser,
     /// Smooth the displayed value with a Kalman filter (stats stay raw).
-    pub kalman: bool,
-    /// Kalman process noise variance, used when `kalman` is set. The initial
-    /// value when `kalman_adaptive` is also set.
-    pub kalman_q: f64,
-    /// Kalman measurement noise variance, used when `kalman` is set.
-    pub kalman_r: f64,
-    /// Let the Kalman filter adapt `kalman_q` online from the innovation
-    /// sequence (NIS), instead of holding it fixed. Used when `kalman` is set.
-    pub kalman_adaptive: bool,
-    /// Samples averaged for the NIS statistic driving `kalman_adaptive`.
-    pub kalman_adaptive_window: usize,
-    /// Floor for the adapted `q`, used when `kalman_adaptive` is set.
-    pub kalman_q_min: f64,
-    /// Ceiling for the adapted `q`, used when `kalman_adaptive` is set.
-    pub kalman_q_max: f64,
-    /// Step size on `log q` per adaptation, used when `kalman_adaptive` is set.
-    pub kalman_adaptive_gain: f64,
+    /// `None` when `--kalman` wasn't given.
+    pub kalman: Option<KalmanTuning>,
     /// Some display effects keep moving between measurements (the Kalman
     /// estimate extrapolating along its velocity, the needle settling toward
     /// a target with `--needle-inertia`), so repaint every frame rather than
@@ -71,20 +56,7 @@ pub fn run(term: &mut Tui, display: &mut dyn Display, cfg: &LoopConfig) -> io::R
     // which is what stops the reader thread.
     let _reader = input::spawn_reader(tx, cfg.parser.clone());
 
-    let kalman = cfg.kalman.then(|| {
-        if cfg.kalman_adaptive {
-            Kalman::new_adaptive(
-                cfg.kalman_q,
-                cfg.kalman_r,
-                cfg.kalman_adaptive_window,
-                cfg.kalman_q_min,
-                cfg.kalman_q_max,
-                cfg.kalman_adaptive_gain,
-            )
-        } else {
-            Kalman::new(cfg.kalman_q, cfg.kalman_r)
-        }
-    });
+    let kalman = cfg.kalman.as_ref().map(Kalman::from_tuning);
     let mut feed = Feed::new(cfg.window, cfg.stale_after, kalman);
     let mut last_draw = Instant::now() - cfg.frame;
     let mut dirty = true;

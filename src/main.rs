@@ -26,14 +26,7 @@ struct Args {
     frame: Duration,
     stale_after: Duration,
     overflow_hold: Duration,
-    kalman: bool,
-    kalman_q: f64,
-    kalman_r: f64,
-    kalman_adaptive: bool,
-    kalman_adaptive_window: usize,
-    kalman_q_min: f64,
-    kalman_q_max: f64,
-    kalman_adaptive_gain: f64,
+    kalman: Option<math::kalman::KalmanTuning>,
     max_decay: Option<Duration>,
     max_decay_target: f64,
     needle_inertia: Option<Duration>,
@@ -61,15 +54,19 @@ const DEFAULT_KALMAN_Q_MAX_MULT: f64 = 1000.0;
 // 0 = off, the needle snaps straight to the reading (today's behavior).
 const DEFAULT_NEEDLE_INERTIA_SECS: f64 = 0.0;
 
-const HELP: &str = "\
+const HELP_HEADER: &str = "\
 termtaco: a terminal tachometer; a tiny TUI speedometer for streaming values
 
 USAGE:
     <producer> | termtaco [OPTIONS]
 
 OPTIONS:
-    --window N           samples retained for stats (default: 200)
-    --display NAME       renderer to use (default: speedometer)
+";
+
+// The everyday flags: what a first-time user needs. Power-user tuning knobs
+// (Kalman internals, decay/inertia curves, timing) live in HELP_ADVANCED
+// instead, behind --help-all, so this stays short.
+const HELP_BASIC: &str = "    --window N           samples retained for stats (default: 200)
     --parser SPEC        how to extract the value from each line (default: first)
                            first      first number on the line
                            last       last number on the line
@@ -86,12 +83,24 @@ OPTIONS:
                           a value past it stays capped and alarmed instead of
                           rescaling after --overflow-hold
     --fps N              refresh rate, frames per second (default: 30)
-    --stale-after SECS   silence before the reading is flagged stale (default: 3)
-    --overflow-hold SECS hold a capped reading this long before rescaling (default: 1)
     --kalman             smooth the needle/value with a Kalman filter (stats stay raw);
                           also shows the filter's ± uncertainty on the value label,
                           a greyed-out band around the needle, and the last raw
-                          measurement underneath
+                          measurement underneath; tuning flags are in --help-all
+    --theme NAME         built-in color preset (default: bw)
+                           bw, color, catppuccin-mocha, dracula, gruvbox,
+                           nord, solarized-dark, tokyo-night
+    --profile NAME       load a named bundle of flags (default: none)
+                           ping       a live ping RTT dial
+                          flags given alongside --profile override its values
+    -h, --help           print this help
+    --help-all           print help including advanced tuning flags
+";
+
+const HELP_ADVANCED: &str = "ADVANCED OPTIONS:
+    --display NAME       renderer to use (default: speedometer)
+    --stale-after SECS   silence before the reading is flagged stale (default: 3)
+    --overflow-hold SECS hold a capped reading this long before rescaling (default: 1)
     --kalman-q Q         Kalman process noise variance per second (default: 0.001)
     --kalman-r R         Kalman measurement noise variance (default: 0.1)
     --kalman-adaptive    let the filter adapt --kalman-q online from the innovation
@@ -110,12 +119,11 @@ OPTIONS:
     --needle-inertia SECS
                          give the needle mass: it lags the reading and settles
                           over ~5x SECS (default: 0, the needle snaps)
-    --theme NAME         built-in color preset (default: bw)
-                           bw, color, catppuccin-mocha, dracula, gruvbox,
-                           nord, solarized-dark, tokyo-night
     --print-theme NAME   print a preset's theme-file source to stdout, then exit
-    -h, --help           print this help
+    --print-profile NAME print a preset's profile-file source to stdout, then exit
+";
 
+const HELP_NOTES: &str = "\
 Reads one float per line from stdin; by default the first number on each line
 is used, so it sits downstream of output like `average rate: 33.746`. Pick a
 different --parser when the value isn't first, e.g. `ping <host> | termtaco
@@ -126,8 +134,25 @@ different --parser when the value isn't first, e.g. `ping <host> | termtaco
 --print-theme NAME dumps a preset as a starting point, e.g.
 `termtaco --print-theme nord > ~/.config/termtaco/theme`. --theme overrides
 that file when both are given.
+
+--profile loads a named bundle of the flags above, e.g. `ping 8.8.8.8 |
+termtaco --profile ping`. For a custom one, write
+~/.config/termtaco/profiles/NAME (one `flag = value` or bare `flag` line per
+option, the same shape --print-profile NAME dumps as a starting point).
+Flags given on the command line alongside --profile override its values.
+
 Press t to cycle through the built-in presets live.
 Quit with q, Esc, or Ctrl-C.";
+
+/// The default `-h`/`--help` output: everyday flags only.
+fn help_basic() -> String {
+    format!("{HELP_HEADER}{HELP_BASIC}\n{HELP_NOTES}")
+}
+
+/// `--help-all`: everyday flags plus the advanced tuning surface.
+fn help_all() -> String {
+    format!("{HELP_HEADER}{HELP_BASIC}\n{HELP_ADVANCED}\n{HELP_NOTES}")
+}
 
 /// The value attached to a flag: the inline part of `--flag=value`, or the
 /// next argv entry for the `--flag value` form. `None` when neither exists,
@@ -137,6 +162,51 @@ fn flag_value(inline: Option<&str>, it: &mut impl Iterator<Item = String>) -> Op
         Some(v) => Some(v.to_string()),
         None => it.next(),
     }
+}
+
+/// Pulls `--profile NAME`/`--profile=NAME` out of `argv`, leaving every
+/// other token untouched and in order. `None` if `--profile` wasn't given.
+/// Last occurrence wins, same as every other flag in [`parse_args`]'s loop.
+/// A separate pre-pass (rather than a `parse_args` match arm) because a
+/// profile expands into *more* tokens, which have to be spliced in *before*
+/// the rest of `argv` for real CLI flags to override the profile's values,
+/// the same way `--theme` already overrides the theme file.
+fn extract_profile(argv: Vec<String>) -> Result<(Option<String>, Vec<String>), ExitCode> {
+    let mut name: Option<String> = None;
+    let mut rest = Vec::with_capacity(argv.len());
+    let mut it = argv.into_iter();
+    while let Some(raw) = it.next() {
+        let (key, inline) = match raw.find('=') {
+            Some(i) => (&raw[..i], Some(raw[i + 1..].to_string())),
+            None => (raw.as_str(), None),
+        };
+        if key == "--profile" {
+            name = Some(flag_value(inline.as_deref(), &mut it).ok_or_else(|| {
+                eprintln!("--profile needs a name");
+                ExitCode::from(2)
+            })?);
+        } else {
+            rest.push(raw);
+        }
+    }
+    Ok((name, rest))
+}
+
+/// Resolves a `--profile` name (if [`extract_profile`] found one) to its
+/// expanded tokens, spliced before `rest` so the real command-line flags
+/// that follow override anything the profile sets.
+fn resolve_profile(argv: Vec<String>) -> Result<Vec<String>, ExitCode> {
+    let (name, rest) = extract_profile(argv)?;
+    let Some(name) = name else { return Ok(rest) };
+    let content = infra::profile::load(&name).map_err(|e| {
+        eprintln!("{e}");
+        ExitCode::from(2)
+    })?;
+    let profile_tokens = infra::profile::expand(&content).map_err(|e| {
+        eprintln!("{e}");
+        ExitCode::from(2)
+    })?;
+    Ok(profile_tokens.into_iter().chain(rest).collect())
 }
 
 fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode> {
@@ -175,7 +245,11 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         };
         match (key, inline) {
             ("-h", None) | ("--help", None) => {
-                println!("{HELP}");
+                println!("{}", help_basic());
+                return Err(ExitCode::SUCCESS);
+            }
+            ("--help-all", None) => {
+                println!("{}", help_all());
                 return Err(ExitCode::SUCCESS);
             }
             ("--print-theme", v) => {
@@ -185,6 +259,18 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
                 })?;
                 let content = display::speedometer::preset_content(&name).ok_or_else(|| {
                     eprintln!("unknown theme '{name}' (available: {})", display::speedometer::PRESET_NAMES);
+                    ExitCode::from(2)
+                })?;
+                print!("{content}");
+                return Err(ExitCode::SUCCESS);
+            }
+            ("--print-profile", v) => {
+                let name = flag_value(v, &mut it).ok_or_else(|| {
+                    eprintln!("--print-profile needs a name (one of: {})", infra::profile::PRESET_NAMES);
+                    ExitCode::from(2)
+                })?;
+                let content = infra::profile::preset_content(&name).ok_or_else(|| {
+                    eprintln!("unknown profile '{name}' (available: {})", infra::profile::PRESET_NAMES);
                     ExitCode::from(2)
                 })?;
                 print!("{content}");
@@ -251,7 +337,7 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
             }
             ("--theme", v) => theme_file = Some(parse_theme(flag_value(v, &mut it).as_deref())?),
             _ => {
-                eprintln!("unknown argument: {raw}\n\n{HELP}");
+                eprintln!("unknown argument: {raw}\n\n{}", help_basic());
                 return Err(ExitCode::from(2));
             }
         }
@@ -288,14 +374,15 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, ExitCode>
         frame: Duration::from_secs_f64(1.0 / fps),
         stale_after: Duration::from_secs_f64(stale_secs),
         overflow_hold: Duration::from_secs_f64(overflow_secs),
-        kalman,
-        kalman_q,
-        kalman_r,
-        kalman_adaptive,
-        kalman_adaptive_window,
-        kalman_q_min,
-        kalman_q_max,
-        kalman_adaptive_gain,
+        kalman: kalman.then_some(math::kalman::KalmanTuning {
+            q: kalman_q,
+            r: kalman_r,
+            adaptive: kalman_adaptive,
+            window: kalman_adaptive_window,
+            q_min: kalman_q_min,
+            q_max: kalman_q_max,
+            gain: kalman_adaptive_gain,
+        }),
         max_decay: max_decay_secs.map(Duration::from_secs_f64),
         max_decay_target,
         needle_inertia: (needle_inertia_secs > 0.0).then(|| Duration::from_secs_f64(needle_inertia_secs)),
@@ -384,7 +471,11 @@ fn needs_animation(kalman: bool, needle_inertia: Option<Duration>, max_decay: Op
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args(std::env::args().skip(1)) {
+    let argv = match resolve_profile(std::env::args().skip(1).collect()) {
+        Ok(argv) => argv,
+        Err(code) => return code,
+    };
+    let args = match parse_args(argv) {
         Ok(a) => a,
         Err(code) => return code,
     };
@@ -423,14 +514,7 @@ fn main() -> ExitCode {
         border_label: args.border_label,
         parser: args.parser,
         kalman: args.kalman,
-        kalman_q: args.kalman_q,
-        kalman_r: args.kalman_r,
-        kalman_adaptive: args.kalman_adaptive,
-        kalman_adaptive_window: args.kalman_adaptive_window,
-        kalman_q_min: args.kalman_q_min,
-        kalman_q_max: args.kalman_q_max,
-        kalman_adaptive_gain: args.kalman_adaptive_gain,
-        animate: needs_animation(args.kalman, args.needle_inertia, args.max_decay),
+        animate: needs_animation(args.kalman.is_some(), args.needle_inertia, args.max_decay),
     };
 
     match run(&mut *display, &cfg) {
@@ -470,15 +554,23 @@ mod tests {
         assert!(!a.include_zero);
         assert_eq!(a.min, None);
         assert_eq!(a.max, None);
-        assert!(!a.kalman);
-        assert!(!a.kalman_adaptive);
-        assert_eq!(a.kalman_adaptive_window, DEFAULT_KALMAN_ADAPTIVE_WINDOW);
-        assert_eq!(a.kalman_q_min, DEFAULT_KALMAN_Q);
-        assert_eq!(a.kalman_q_max, DEFAULT_KALMAN_Q * DEFAULT_KALMAN_Q_MAX_MULT);
-        assert_eq!(a.kalman_adaptive_gain, DEFAULT_KALMAN_ADAPTIVE_GAIN);
+        assert!(a.kalman.is_none());
         assert_eq!(a.max_decay, None);
         assert_eq!(a.needle_inertia, None);
         assert_eq!(a.theme_file, None);
+    }
+
+    #[test]
+    fn kalman_tuning_defaults_when_enabled() {
+        let a = args(&["--kalman"]).unwrap();
+        let t = a.kalman.unwrap();
+        assert_eq!(t.q, DEFAULT_KALMAN_Q);
+        assert_eq!(t.r, DEFAULT_KALMAN_R);
+        assert!(!t.adaptive);
+        assert_eq!(t.window, DEFAULT_KALMAN_ADAPTIVE_WINDOW);
+        assert_eq!(t.q_min, DEFAULT_KALMAN_Q);
+        assert_eq!(t.q_max, DEFAULT_KALMAN_Q * DEFAULT_KALMAN_Q_MAX_MULT);
+        assert_eq!(t.gain, DEFAULT_KALMAN_ADAPTIVE_GAIN);
     }
 
     #[test]
@@ -492,6 +584,29 @@ mod tests {
     #[test]
     fn unknown_flag_errors() {
         assert!(args(&["--bogus"]).is_err());
+    }
+
+    #[test]
+    fn help_all_flag_is_recognized() {
+        // ExitCode is opaque (no portable PartialEq/Debug across our pinned
+        // MSRV), so this can't distinguish SUCCESS from the unknown-argument
+        // exit(2) by comparing codes; `advanced_help_is_a_superset_of_basic_help`
+        // is what actually pins the printed content. This just confirms
+        // --help-all takes the early-exit path (Err) rather than parsing as Args.
+        assert!(args(&["--help-all"]).is_err());
+    }
+
+    #[test]
+    fn advanced_help_is_a_superset_of_basic_help() {
+        let basic = help_basic();
+        let all = help_all();
+        assert!(!basic.contains("ADVANCED OPTIONS"), "basic help should not show the advanced section");
+        assert!(!basic.contains("--kalman-adaptive"), "tuning flags belong in --help-all, not the default help");
+        assert!(all.contains("ADVANCED OPTIONS"));
+        assert!(all.contains("--kalman-adaptive"));
+        let common_prefix = format!("{HELP_HEADER}{HELP_BASIC}");
+        assert!(basic.starts_with(&common_prefix), "basic help should start with the shared flag list");
+        assert!(all.starts_with(&common_prefix), "advanced help should start with the same basic flag list");
     }
 
     #[test]
@@ -575,15 +690,16 @@ mod tests {
 
     #[test]
     fn kalman_adaptive_flag_round_trips() {
-        let a = args(&["--kalman-adaptive"]).unwrap();
-        assert!(a.kalman_adaptive);
+        let a = args(&["--kalman", "--kalman-adaptive"]).unwrap();
+        assert!(a.kalman.unwrap().adaptive);
     }
 
     #[test]
     fn kalman_q_min_and_max_default_relative_to_kalman_q() {
-        let a = args(&["--kalman-q", "0.5"]).unwrap();
-        assert_eq!(a.kalman_q_min, 0.5);
-        assert_eq!(a.kalman_q_max, 0.5 * DEFAULT_KALMAN_Q_MAX_MULT);
+        let a = args(&["--kalman", "--kalman-q", "0.5"]).unwrap();
+        let t = a.kalman.unwrap();
+        assert_eq!(t.q_min, 0.5);
+        assert_eq!(t.q_max, 0.5 * DEFAULT_KALMAN_Q_MAX_MULT);
     }
 
     #[test]
@@ -639,5 +755,57 @@ mod tests {
             "max decay alone should animate: this is the bug being fixed"
         );
         assert!(needs_animation(true, Some(Duration::from_millis(1)), Some(Duration::from_secs(1))));
+    }
+
+    fn strs(argv: &[&str]) -> Vec<String> {
+        argv.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn extract_profile_finds_the_flag_in_either_form() {
+        let (name, rest) = extract_profile(strs(&["--title", "x", "--profile", "ping"])).unwrap();
+        assert_eq!(name.as_deref(), Some("ping"));
+        assert_eq!(rest, vec!["--title", "x"]);
+
+        let (name, rest) = extract_profile(strs(&["--profile=ping", "--title", "x"])).unwrap();
+        assert_eq!(name.as_deref(), Some("ping"));
+        assert_eq!(rest, vec!["--title", "x"]);
+    }
+
+    #[test]
+    fn extract_profile_is_none_when_absent() {
+        let (name, rest) = extract_profile(strs(&["--title", "x"])).unwrap();
+        assert_eq!(name, None);
+        assert_eq!(rest, vec!["--title", "x"]);
+    }
+
+    #[test]
+    fn extract_profile_without_a_value_errors() {
+        assert!(extract_profile(strs(&["--profile"])).is_err());
+    }
+
+    #[test]
+    fn resolve_profile_expands_a_built_in_preset() {
+        let argv = resolve_profile(strs(&["--profile", "ping"])).unwrap();
+        assert!(argv.contains(&"--parser=ping".to_string()));
+        assert!(argv.contains(&"--kalman".to_string()));
+    }
+
+    #[test]
+    fn resolve_profile_lets_cli_flags_override_the_profile() {
+        // ping.profile sets kalman-r=1300; a CLI flag after --profile should win.
+        let argv = resolve_profile(strs(&["--profile", "ping", "--kalman-r", "42"])).unwrap();
+        let a = parse_args(argv).unwrap();
+        assert_eq!(a.kalman.unwrap().r, 42.0);
+    }
+
+    #[test]
+    fn resolve_profile_reports_an_unknown_name() {
+        assert!(resolve_profile(strs(&["--profile", "bogus"])).is_err());
+    }
+
+    #[test]
+    fn resolve_profile_passes_through_when_absent() {
+        assert_eq!(resolve_profile(strs(&["--title", "x"])).unwrap(), vec!["--title", "x"]);
     }
 }
