@@ -39,8 +39,18 @@ pub fn load(name: &str) -> Result<String, String> {
     if name.contains('/') {
         return std::fs::read_to_string(name).map_err(|e| format!("profile '{name}': {e}"));
     }
-    if let Some(content) = crate::infra::config::profile_path(name).and_then(|p| std::fs::read_to_string(p).ok()) {
-        return Ok(content);
+    if let Some(path) = crate::infra::config::profile_path(name) {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => return Ok(content),
+            // Missing is expected (falls through to a built-in below); any
+            // other error (permissions, invalid UTF-8) means a real profile
+            // file is sitting there unreadable, which is worth reporting
+            // rather than silently pretending it doesn't exist.
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("profile '{name}' ({}): {e}", path.display()));
+            }
+            Err(_) => {}
+        }
     }
     preset_content(name)
         .map(str::to_string)
