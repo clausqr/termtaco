@@ -198,8 +198,15 @@ impl Speedometer {
                     draw::draw_kalman_center_tick(ctx, smoothed, lo, hi, needle_color);
                 }
                 draw::draw_stat_ticks(ctx, &stats, display_max, lo, hi, &theme);
-                draw::draw_raw_tick(ctx, stats.last, lo, hi, raw_color);
                 draw::draw_needle(ctx, needle_value, lo, hi, needle_color);
+                // Draw the raw measurement tick LAST of the on-arc marks. The
+                // Braille marker stores one foreground color per 2x4 dot cell,
+                // so when the needle (estimate) and the raw tick (measurement)
+                // light dots in the same cell the last painter wins that cell's
+                // color. Painting the raw tick after the needle keeps the
+                // measurement visible whenever it coincides with the estimate,
+                // instead of being recolored away on small or short panes.
+                draw::draw_raw_tick(ctx, stats.last, lo, hi, raw_color);
                 draw::draw_labels(ctx, smoothed, step, kalman_uncertainty, value_color, theme.uncertainty);
                 if kalman_uncertainty.is_some() {
                     draw::draw_last_measurement(ctx, stats.last, step, raw_color);
