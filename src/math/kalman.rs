@@ -162,21 +162,23 @@ impl Kalman {
     }
 
     /// Fold one measurement's normalized innovation squared (`nu^2 / s`)
-    /// into the adaptation window and, once it's full, nudge `q` toward
-    /// consistency. A no-op on a non-adaptive filter (checked by the caller)
-    /// or while the window is still filling: warm-up keeps the prior `q`
-    /// rather than reacting to a partial, noisier mean.
+    /// into the current adaptation batch and, once `window` samples have
+    /// accumulated, nudge `q` toward consistency and start a fresh batch. A
+    /// no-op on a non-adaptive filter (checked by the caller) or while the
+    /// batch is still filling: warm-up keeps the prior `q` rather than
+    /// reacting to a partial, noisier mean. Batches are non-overlapping, so
+    /// `q` moves at most once per `window` measurements, not on every update.
     fn adapt_q(&mut self, nis: f64) {
         let a = self.adaptive.as_mut().expect("adapt_q called on a non-adaptive filter");
-        if a.nis.len() == a.window {
-            a.nis.pop_front();
-        }
         a.nis.push_back(nis);
         if a.nis.len() < a.window {
             return;
         }
 
         let mean_nis = a.nis.iter().sum::<f64>() / a.window as f64;
+        // Non-overlapping batch: clear the accumulator so the next window
+        // starts empty rather than sliding one sample at a time.
+        a.nis.clear();
         let (lo, hi) = ADAPT_DEADBAND;
         if (lo..=hi).contains(&mean_nis) {
             return;
@@ -188,15 +190,19 @@ impl Kalman {
         self.q = (self.q * (a.gain * step).exp()).clamp(a.q_min, a.q_max);
     }
 
-    /// Standard deviation of the position estimate: `sqrt(p00)`, the
-    /// diagonal of the covariance matrix that tracks position uncertainty.
-    /// Shrinks as consistent measurements arrive, grows on `predict` and
-    /// after a gap, so it doubles as a live "how much do I trust this
-    /// estimate" readout in the same units as the tracked value. `0.0`
-    /// before the first [`update`](Self::update) seeds the filter.
+    /// Predicted-measurement (innovation) standard deviation: `sqrt(p00 + r)`,
+    /// the spread of where the *next raw sample* is expected to land, not just
+    /// the estimate's own confidence `sqrt(p00)`. The latter is the
+    /// a-posteriori uncertainty about the true underlying value and is
+    /// legitimately far tighter than the raw sample scatter; adding the
+    /// measurement noise `r` back in gives a band that reads as a plausibility
+    /// interval for the value the way viewers expect. Shrinks as consistent
+    /// measurements arrive, grows on `predict` and after a gap, but never
+    /// collapses below `sqrt(r)` (the irreducible sample noise). `0.0` before
+    /// the first [`update`](Self::update) seeds the filter.
     pub fn uncertainty(&self) -> f64 {
         if self.seeded {
-            self.p00.sqrt()
+            (self.p00 + self.r).sqrt()
         } else {
             0.0
         }
